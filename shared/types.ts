@@ -88,6 +88,51 @@ export interface Conflict {
   description: string;
   resolved: number;
   created_at: string;
+  order_no?: string;
+  customer_name?: string;
+  technician_name?: string;
+  scheduled_start_time?: string;
+  scheduled_end_time?: string;
+  order_status?: string;
+}
+
+export type ScheduleItemType = 'order_assigned' | 'order_confirmed' | 'order_in_progress' | 'approval_pending' | 'approval_rejected';
+
+export interface TechnicianScheduleItem {
+  id: string;
+  type: ScheduleItemType;
+  source_id: number;
+  order_id: number;
+  order_no: string;
+  customer_name: string;
+  technician_id: number;
+  technician_name: string;
+  scheduled_start_time: string;
+  scheduled_end_time: string;
+  status: string;
+  status_label: string;
+  description?: string;
+  applicant_name?: string;
+  approval_remark?: string;
+  created_at: string;
+}
+
+export interface ConflictDetail {
+  conflict: Conflict;
+  overlapping_items: TechnicianScheduleItem[];
+  available_actions: {
+    can_reassign: boolean;
+    can_apply_force_assign: boolean;
+    can_force_assign: boolean;
+    requires_approval: boolean;
+    approval_reason?: string;
+  };
+}
+
+export interface AssignCheckResult {
+  can_assign: boolean;
+  conflicts: ConflictDetail[];
+  schedule_items: TechnicianScheduleItem[];
 }
 
 export interface DailyReport {

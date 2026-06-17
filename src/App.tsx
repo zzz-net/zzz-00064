@@ -10,6 +10,7 @@ import CreateOrder from '@/pages/CreateOrder';
 import OrderDetail from '@/pages/OrderDetail';
 import Approvals from '@/pages/Approvals';
 import Reports from '@/pages/Reports';
+import ConflictCenter from '@/pages/ConflictCenter';
 
 function App() {
   const { checkAuth } = useAuthStore();
@@ -29,6 +30,7 @@ function App() {
         <Route path="/orders/new" element={<CreateOrder />} />
         <Route path="/orders/:id" element={<OrderDetail />} />
         <Route path="/approvals" element={<Approvals />} />
+        <Route path="/conflicts" element={<ConflictCenter />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

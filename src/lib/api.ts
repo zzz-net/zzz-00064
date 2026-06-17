@@ -1,11 +1,24 @@
 const API_BASE = '/api';
 
-interface ApiResponse<T = any> {
+export interface ApiResponse<T = any> {
   success: boolean;
   data?: T;
   message?: string;
   error?: string;
   total?: number;
+  conflict_detail?: any;
+}
+
+export class ApiError extends Error {
+  status: number;
+  response: ApiResponse;
+
+  constructor(message: string, status: number, response: ApiResponse) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.response = response;
+  }
 }
 
 async function request<T = any>(
@@ -28,7 +41,12 @@ async function request<T = any>(
   const data = await response.json();
 
   if (!response.ok) {
-    throw new Error(data.error || data.message || '请求失败');
+    const error = new ApiError(
+      data.error || data.message || '请求失败',
+      response.status,
+      data
+    );
+    throw error;
   }
 
   return data as ApiResponse<T>;

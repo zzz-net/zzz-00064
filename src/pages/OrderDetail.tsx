@@ -16,7 +16,7 @@ import {
 import Layout from '@/components/Layout/Layout';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/useAuthStore';
-import { WorkOrder, OrderHistory, Technician } from '../../shared/types.js';
+import { WorkOrder, OrderHistory, Technician, AssignCheckResult, TechnicianScheduleItem } from '../../shared/types.js';
 
 const statusLabels: Record<string, { label: string; color: string }> = {
   pending: { label: '待分配', color: 'bg-yellow-100 text-yellow-700 border-yellow-200' },
@@ -57,12 +57,16 @@ export default function OrderDetail() {
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [showReassignModal, setShowReassignModal] = useState(false);
-  const [selectedTechnician, setSelectedTechnician] = useState<string>('');
+  const [selectedTechnician, setSelectedTechnician] = useState('');
   const [cancelReason, setCancelReason] = useState('');
   const [reassignReason, setReassignReason] = useState('');
   const [reassignTechnician, setReassignTechnician] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [assignCheckResult, setAssignCheckResult] = useState<AssignCheckResult | null>(null);
+  const [checkingConflict, setCheckingConflict] = useState(false);
+  const [forceAssignReason, setForceAssignReason] = useState('');
+  const [showForceAssignInput, setShowForceAssignInput] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -93,9 +97,40 @@ export default function OrderDetail() {
     }
   };
 
+  const checkAssignConflict = async (technicianId: number) => {
+    if (!id || !technicianId) return;
+    setCheckingConflict(true);
+    setAssignCheckResult(null);
+    try {
+      const res = await api.get(`/conflicts/check-assign/${id}/${technicianId}`);
+      setAssignCheckResult(res.data);
+    } catch (err: any) {
+      console.error('Failed to check conflict:', err);
+    } finally {
+      setCheckingConflict(false);
+    }
+  };
+
+  const handleTechnicianSelect = (techId: string) => {
+    setSelectedTechnician(techId);
+    setError('');
+    setShowForceAssignInput(false);
+    setForceAssignReason('');
+    if (techId) {
+      checkAssignConflict(parseInt(techId));
+    } else {
+      setAssignCheckResult(null);
+    }
+  };
+
   const handleAssign = async () => {
     if (!selectedTechnician) {
       setError('请选择技师');
+      return;
+    }
+
+    if (assignCheckResult && !assignCheckResult.can_assign) {
+      setError('该技师在此时段存在冲突，请申请强制派单或更换技师');
       return;
     }
 
@@ -106,8 +141,12 @@ export default function OrderDetail() {
       });
       setShowAssignModal(false);
       setSelectedTechnician('');
+      setAssignCheckResult(null);
       loadOrderData();
     } catch (err: any) {
+      if (err.response?.conflict_detail) {
+        setAssignCheckResult(err.response.conflict_detail);
+      }
       setError(err.message || '分配失败');
     } finally {
       setLoading(false);
@@ -186,30 +225,59 @@ export default function OrderDetail() {
       alert('请选择技师');
       return;
     }
-    const reason = prompt('请输入强制派单理由：');
-    if (!reason) return;
 
+    if (!showForceAssignInput) {
+      setShowForceAssignInput(true);
+      return;
+    }
+
+    if (!forceAssignReason.trim()) {
+      alert('请输入强制派单理由');
+      return;
+    }
+
+    setLoading(true);
     try {
       if (isAdmin) {
         await api.put(`/orders/${id}/force-assign`, {
           technicianId: parseInt(selectedTechnician),
-          reason,
+          reason: forceAssignReason,
         });
         setShowAssignModal(false);
+        setSelectedTechnician('');
+        setAssignCheckResult(null);
+        setShowForceAssignInput(false);
+        setForceAssignReason('');
         loadOrderData();
         alert('强制派单成功');
       } else {
         await api.post(`/orders/${id}/force-assign-request`, {
           technicianId: parseInt(selectedTechnician),
-          reason,
+          reason: forceAssignReason,
         });
         setShowAssignModal(false);
+        setSelectedTechnician('');
+        setAssignCheckResult(null);
+        setShowForceAssignInput(false);
+        setForceAssignReason('');
         loadOrderData();
         alert('强制派单申请已提交，等待管理员审批');
       }
     } catch (err: any) {
       alert(err.message || '操作失败');
+    } finally {
+      setLoading(false);
     }
+  };
+
+  const formatAssignTime = (dateStr: string) => {
+    const date = new Date(dateStr);
+    return date.toLocaleTimeString('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   };
 
   const formatDateTime = (dateStr: string | null) => {
@@ -446,19 +514,21 @@ export default function OrderDetail() {
 
         {showAssignModal && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-xl w-full max-w-md p-6">
+            <div className="bg-white rounded-xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
               <h3 className="text-lg font-semibold text-slate-800 mb-5">分配技师</h3>
+
               {error && (
                 <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
                   {error}
                 </div>
               )}
+
               <div className="mb-5">
                 <label className="block text-sm font-medium text-slate-700 mb-2">选择技师</label>
                 <select
                   value={selectedTechnician}
-                  onChange={(e) => setSelectedTechnician(e.target.value)}
+                  onChange={(e) => handleTechnicianSelect(e.target.value)}
                   className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                 >
                   <option value="">请选择技师</option>
@@ -469,12 +539,181 @@ export default function OrderDetail() {
                   ))}
                 </select>
               </div>
+
+              {selectedTechnician && checkingConflict && (
+                <div className="mb-5 p-4 bg-slate-50 rounded-lg text-center text-slate-500 text-sm">
+                  正在检查时段冲突...
+                </div>
+              )}
+
+              {selectedTechnician && !checkingConflict && assignCheckResult && (
+                <div className="mb-5 space-y-4">
+                  {!assignCheckResult.can_assign && assignCheckResult.conflicts.length > 0 && (
+                    <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                      <div className="flex items-start gap-2 mb-3">
+                        <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+                        <div>
+                          <div className="font-medium text-red-800">检测到时段冲突</div>
+                          <div className="text-sm text-red-600 mt-1">
+                            {assignCheckResult.conflicts[0]?.available_actions.approval_reason ||
+                              '该技师在该时段已有安排'}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 space-y-2">
+                        <div className="text-sm font-medium text-red-700">冲突来源：</div>
+                        {assignCheckResult.conflicts.map((conflict, idx) => (
+                          <div key={idx} className="space-y-1">
+                            {conflict.overlapping_items.map((item) => (
+                              <div
+                                key={item.id}
+                                className="text-sm bg-white p-2 rounded border border-red-100 flex justify-between items-center"
+                              >
+                                <div>
+                                  <span className="font-medium text-slate-800">
+                                    {item.order_no}
+                                  </span>
+                                  <span className="ml-2 text-xs text-slate-500">
+                                    {item.customer_name}
+                                  </span>
+                                </div>
+                                <div className="text-right">
+                                  <span
+                                    className={`text-xs px-2 py-0.5 rounded-full ${
+                                      item.type.startsWith('order_')
+                                        ? 'bg-blue-100 text-blue-700'
+                                        : item.type === 'approval_pending'
+                                        ? 'bg-yellow-100 text-yellow-700'
+                                        : 'bg-red-100 text-red-700'
+                                    }`}
+                                  >
+                                    {item.status_label}
+                                  </span>
+                                  <div className="text-xs text-slate-500 mt-1">
+                                    {formatAssignTime(item.scheduled_start_time)} -{' '}
+                                    {formatAssignTime(item.scheduled_end_time)}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="mt-3 pt-3 border-t border-red-200">
+                        <div className="text-sm font-medium text-red-700 mb-2">
+                          可选处理动作：
+                        </div>
+                        <div className="space-y-1 text-sm text-red-600">
+                          <div className="flex items-center gap-2">
+                          <CheckCircle className="w-4 h-4" />
+                          改派其他技师
+                        </div>
+                          {assignCheckResult.conflicts[0]?.available_actions
+                            .can_apply_force_assign && (
+                            <div className="flex items-center gap-2">
+                              <CheckCircle className="w-4 h-4" />
+                              申请强制派单（需主管审批）
+                            </div>
+                          )}
+                          {assignCheckResult.conflicts[0]?.available_actions
+                            .can_force_assign && (
+                            <div className="flex items-center gap-2">
+                              <CheckCircle className="w-4 h-4" />
+                              直接强制派单（您是主管）
+                            </div>
+                          )}
+                          {!assignCheckResult.conflicts[0]?.available_actions
+                            .can_apply_force_assign &&
+                            !assignCheckResult.conflicts[0]?.available_actions
+                              .can_force_assign && (
+                              <div className="flex items-center gap-2 text-red-500">
+                                <XCircle className="w-4 h-4" />
+                                不可申请强制派单（已有驳回记录）
+                              </div>
+                            )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {assignCheckResult.schedule_items.length > 0 && (
+                    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                      <div className="text-sm font-medium text-blue-800 mb-2">
+                      该技师同时段安排（共 {assignCheckResult.schedule_items.length} 项
+                    </div>
+                      <div className="space-y-2">
+                        {assignCheckResult.schedule_items.map((item) => (
+                          <div
+                            key={item.id}
+                            className="text-sm bg-white p-2 rounded border border-blue-100 flex justify-between items-center"
+                          >
+                            <div>
+                              <span className="font-medium text-slate-800">
+                                {item.order_no}
+                              </span>
+                              <span className="ml-2 text-xs text-slate-500">
+                                {item.customer_name}
+                              </span>
+                            </div>
+                            <div className="text-right">
+                              <span
+                                className={`text-xs px-2 py-0.5 rounded-full ${
+                                  item.type.startsWith('order_')
+                                    ? 'bg-blue-100 text-blue-700'
+                                    : item.type === 'approval_pending'
+                                    ? 'bg-yellow-100 text-yellow-700'
+                                    : 'bg-red-100 text-red-700'
+                                }`}
+                              >
+                                {item.status_label}
+                              </span>
+                              <div className="text-xs text-slate-500 mt-1">
+                                {formatAssignTime(item.scheduled_start_time)} -{' '}
+                                {formatAssignTime(item.scheduled_end_time)}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {assignCheckResult.can_assign &&
+                    assignCheckResult.schedule_items.length === 0 && (
+                      <div className="p-4 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2">
+                        <CheckCircle className="w-5 h-5 text-green-600" />
+                        <span className="text-sm text-green-700">该时段无冲突，可以分配</span>
+                      </div>
+                    )}
+                </div>
+              )}
+
+              {showForceAssignInput && (
+                <div className="mb-5">
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    强制派单理由
+                  </label>
+                  <textarea
+                    value={forceAssignReason}
+                    onChange={(e) => setForceAssignReason(e.target.value)}
+                    rows={3}
+                    className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none resize-none"
+                    placeholder="请填写强制派单理由..."
+                  />
+                </div>
+              )}
+
               <div className="flex gap-3">
                 <button
                   onClick={() => {
                     setShowAssignModal(false);
                     setSelectedTechnician('');
                     setError('');
+                    setAssignCheckResult(null);
+                    setShowForceAssignInput(false);
+                    setForceAssignReason('');
                   }}
                   className="flex-1 px-4 py-2.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 font-medium transition-colors"
                 >
@@ -482,28 +721,42 @@ export default function OrderDetail() {
                 </button>
                 <button
                   onClick={handleAssign}
-                  disabled={loading}
-                  className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+                  disabled={loading || !assignCheckResult?.can_assign}
+                  className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {loading ? '分配中...' : '确认分配'}
                 </button>
               </div>
-              {!isAdmin && (
-                <button
-                  onClick={handleForceAssign}
-                  className="w-full mt-3 px-4 py-2.5 text-orange-600 hover:bg-orange-50 border border-orange-200 rounded-lg font-medium transition-colors text-sm"
-                >
-                  申请强制派单
-                </button>
-              )}
-              {isAdmin && (
-                <button
-                  onClick={handleForceAssign}
-                  className="w-full mt-3 px-4 py-2.5 text-orange-600 hover:bg-orange-50 border border-orange-200 rounded-lg font-medium transition-colors text-sm"
-                >
-                  强制派单
-                </button>
-              )}
+
+              {selectedTechnician &&
+                assignCheckResult &&
+                !assignCheckResult.can_assign &&
+                assignCheckResult.conflicts[0]?.available_actions
+                  .can_apply_force_assign &&
+                !isAdmin && (
+                  <button
+                    onClick={handleForceAssign}
+                    disabled={loading}
+                    className="w-full mt-3 px-4 py-2.5 text-orange-600 hover:bg-orange-50 border border-orange-200 rounded-lg font-medium transition-colors text-sm disabled:opacity-50"
+                  >
+                    {showForceAssignInput ? '提交强制派单申请' : '申请强制派单'}
+                  </button>
+                )}
+
+              {selectedTechnician &&
+                assignCheckResult &&
+                !assignCheckResult.can_assign &&
+                assignCheckResult.conflicts[0]?.available_actions
+                  .can_force_assign &&
+                isAdmin && (
+                  <button
+                    onClick={handleForceAssign}
+                    disabled={loading}
+                    className="w-full mt-3 px-4 py-2.5 text-orange-600 hover:bg-orange-50 border border-orange-200 rounded-lg font-medium transition-colors text-sm disabled:opacity-50"
+                  >
+                    {showForceAssignInput ? '确认强制派单' : '强制派单'}
+                  </button>
+                )}
             </div>
           </div>
         )}

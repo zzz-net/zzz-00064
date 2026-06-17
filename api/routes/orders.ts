@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { OrderService } from '../services/OrderService.js';
 import { ApprovalService } from '../services/ApprovalService.js';
+import { ConflictService } from '../services/ConflictService.js';
 import { requireAuth, requireAdmin, AuthRequest } from '../middleware/auth.js';
 import { OrderStatus } from '../../shared/types.js';
 
@@ -84,6 +85,21 @@ router.put('/:id/assign', requireAuth, (req: AuthRequest, res) => {
 
     if (!technicianId) {
       res.status(400).json({ success: false, error: '请选择技师' });
+      return;
+    }
+
+    const checkResult = ConflictService.checkAssignConflicts(
+      id,
+      technicianId,
+      req.user!.role === 'admin'
+    );
+
+    if (!checkResult.can_assign) {
+      res.status(409).json({
+        success: false,
+        error: '该技师在此时段存在冲突',
+        conflict_detail: checkResult,
+      });
       return;
     }
 
@@ -176,6 +192,15 @@ router.put('/:id/force-assign', requireAuth, requireAdmin, (req: AuthRequest, re
       return;
     }
 
+    const hasRejected = ConflictService.hasRejectedForceAssignApproval(id, technicianId);
+    if (hasRejected) {
+      res.status(409).json({
+        success: false,
+        error: '该技师的强制派单申请已被驳回，不可再次强制派单，请更换技师',
+      });
+      return;
+    }
+
     const order = OrderService.forceAssign(id, technicianId, req.user!.id, req.user!.name, reason);
     res.json({ success: true, data: order });
   } catch (error: any) {
@@ -190,6 +215,15 @@ router.post('/:id/force-assign-request', requireAuth, (req: AuthRequest, res) =>
 
     if (!technicianId || !reason) {
       res.status(400).json({ success: false, error: '请选择技师并填写理由' });
+      return;
+    }
+
+    const hasRejected = ConflictService.hasRejectedForceAssignApproval(id, technicianId);
+    if (hasRejected) {
+      res.status(409).json({
+        success: false,
+        error: '该技师的强制派单申请已被驳回，不可再次申请，请更换技师',
+      });
       return;
     }
 

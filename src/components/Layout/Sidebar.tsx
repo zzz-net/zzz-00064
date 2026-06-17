@@ -7,6 +7,7 @@ import {
   CheckSquare,
   FileBarChart,
   Wrench,
+  AlertTriangle,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/useAuthStore';
 
@@ -15,6 +16,7 @@ const menuItems = [
   { path: '/technicians', label: '技师管理', icon: Users },
   { path: '/schedule', label: '技师班表', icon: Calendar },
   { path: '/orders', label: '工单列表', icon: ClipboardList },
+  { path: '/conflicts', label: '冲突处理中心', icon: AlertTriangle },
   { path: '/approvals', label: '审批中心', icon: CheckSquare },
   { path: '/reports', label: '日报导出', icon: FileBarChart },
 ];
