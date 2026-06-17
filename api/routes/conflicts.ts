@@ -1,19 +1,21 @@
 import { Router } from 'express';
 import { ConflictService } from '../services/ConflictService.js';
-import { requireAuth, AuthRequest } from '../middleware/auth.js';
+import { requireAuth, requireAdmin, AuthRequest } from '../middleware/auth.js';
+import { ConflictStatus, ConflictType } from '../../shared/types.js';
 
 const router = Router();
 
 router.get('/', requireAuth, (req, res) => {
   try {
-    const { resolved, technicianId, dateFrom, dateTo, type } = req.query;
+    const { resolved, technicianId, dateFrom, dateTo, type, conflictStatus } = req.query;
 
     const conflicts = ConflictService.getAll({
       resolved: resolved !== undefined ? resolved === 'true' : undefined,
       technicianId: technicianId ? parseInt(technicianId as string) : undefined,
       dateFrom: dateFrom as string,
       dateTo: dateTo as string,
-      type: type as any,
+      type: type as ConflictType,
+      conflictStatus: conflictStatus as ConflictStatus,
     });
 
     res.json({ success: true, data: conflicts });
@@ -22,17 +24,18 @@ router.get('/', requireAuth, (req, res) => {
   }
 });
 
-router.get('/:id', requireAuth, (req, res) => {
+router.get('/:id', requireAuth, (req: AuthRequest, res) => {
   try {
     const id = parseInt(req.params.id);
-    const conflict = ConflictService.getById(id);
+    const isAdmin = req.user?.role === 'admin';
+    const detail = ConflictService.getDetail(id, isAdmin);
 
-    if (!conflict) {
+    if (!detail) {
       res.status(404).json({ success: false, error: '冲突记录不存在' });
       return;
     }
 
-    res.json({ success: true, data: conflict });
+    res.json({ success: true, data: detail });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -74,7 +77,7 @@ router.get('/check-assign/:orderId/:technicianId', requireAuth, (req: AuthReques
   }
 });
 
-router.put('/:id/resolve', requireAuth, (req, res) => {
+router.put('/:id/resolve', requireAuth, requireAdmin, (req: AuthRequest, res) => {
   try {
     const id = parseInt(req.params.id);
     const success = ConflictService.resolve(id);

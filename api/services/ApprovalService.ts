@@ -1,6 +1,7 @@
 import { query, run, runAndGetId } from '../db/index.js';
 import { Approval, ApprovalType, ApprovalStatus } from '../../shared/types.js';
 import { OrderService } from './OrderService.js';
+import { ConflictService } from './ConflictService.js';
 
 export class ApprovalService {
   static getAll(status?: ApprovalStatus, type?: ApprovalType): Approval[] {
@@ -81,6 +82,17 @@ export class ApprovalService {
           approverId,
           approverName,
           `审批通过: ${remark || '强制派单'}`
+        );
+        const conflicts = ConflictService.getByOrderId(approval.order_id).filter(
+          c => c.technician_id === targetTechId && !c.resolved
+        );
+        conflicts.forEach(c => ConflictService.resolve(c.id));
+        OrderService.addHistory(
+          approval.order_id,
+          'force_assign_approved',
+          approverId,
+          approverName,
+          `主管审批通过强制派单，审批意见: ${remark || '无'}`
         );
       }
     } else if (approval.type === 'reassign') {

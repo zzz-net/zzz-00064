@@ -80,6 +80,8 @@ export interface Approval {
 
 export type ConflictType = 'time_overlap' | 'overtime';
 
+export type ConflictStatus = 'assigned' | 'confirmed' | 'approval_pending' | 'approval_rejected' | 'resolved';
+
 export interface Conflict {
   id: number;
   order_id: number;
@@ -94,6 +96,15 @@ export interface Conflict {
   scheduled_start_time?: string;
   scheduled_end_time?: string;
   order_status?: string;
+  conflict_status?: ConflictStatus;
+  conflict_status_label?: string;
+  approval_id?: number | null;
+  approval_status?: ApprovalStatus | null;
+  approval_reason?: string | null;
+  applicant_name?: string | null;
+  approver_name?: string | null;
+  approval_remark?: string | null;
+  conflict_source?: string;
 }
 
 export type ScheduleItemType = 'order_assigned' | 'order_confirmed' | 'order_in_progress' | 'approval_pending' | 'approval_rejected';
@@ -120,10 +131,14 @@ export interface TechnicianScheduleItem {
 export interface ConflictDetail {
   conflict: Conflict;
   overlapping_items: TechnicianScheduleItem[];
+  related_order?: WorkOrder;
+  related_approval?: Approval;
   available_actions: {
     can_reassign: boolean;
     can_apply_force_assign: boolean;
     can_force_assign: boolean;
+    can_approve: boolean;
+    can_reject: boolean;
     requires_approval: boolean;
     approval_reason?: string;
   };

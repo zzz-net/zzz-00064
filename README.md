@@ -51,7 +51,26 @@ npx tsc --noEmit
 npm run build
 ```
 
-### 6. 运行回归测试
+### 6. 运行冲突处理中心完整回归测试
+
+```bash
+node test-conflict-center-v2.mjs
+```
+
+测试通过数预期 35/35，覆盖状态筛选、组合筛选、权限拦截、重叠冲突、审批流程、驳回拦截。
+
+### 7. 验证重启后数据持久化
+
+```bash
+# 先跑完整回归测试，记下输出的 UNIQUE_TOKEN
+node test-conflict-center-v2.mjs
+# 输出：测试数据标记 UNIQUE_TOKEN=XXXXXXXX
+
+# 重启后端服务后，运行持久化验证
+node test-conflict-center-persistence.mjs <UNIQUE_TOKEN>
+```
+
+### 8. 运行基础回归测试
 
 ```bash
 node test-regression.mjs
@@ -248,11 +267,16 @@ node test-regression.mjs
 │   └── server.ts             # 服务器入口
 ├── src/
 │   ├── pages/                # 页面组件
+│   │   ├── ConflictCenter.tsx # 冲突处理中心页面
+│   │   └── ...
 │   ├── components/           # 通用组件
+│   ├── lib/
+│   │   └── api.ts            # API 请求封装（含 ApiError）
 │   └── store/                # 状态管理
 ├── shared/types.ts           # 共享 TypeScript 类型
 ├── data/database.db          # SQLite 数据库文件
-├── test-regression.mjs       # 回归测试（正式入口）
+├── test-regression.mjs       # 基础回归测试
+├── test-conflict-center.mjs  # 冲突处理中心回归测试
 ├── test-persistence-check.mjs # 持久化验证脚本
 └── README.md
 ```

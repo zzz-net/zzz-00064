@@ -2,26 +2,79 @@ import { query, run, runAndGetId } from '../db/index.js';
 import {
   Conflict,
   ConflictType,
+  ConflictStatus,
   TechnicianScheduleItem,
   ConflictDetail,
   AssignCheckResult,
+  Approval,
 } from '../../shared/types.js';
 import { OrderService } from './OrderService.js';
 
+const CONFLICT_STATUS_LABELS: Record<ConflictStatus, string> = {
+  assigned: '已分配',
+  confirmed: '已确认',
+  approval_pending: '待审批',
+  approval_rejected: '已驳回',
+  resolved: '已解决',
+};
+
 export class ConflictService {
+  static enrichConflict(row: any): Conflict {
+    const conflict: Conflict = {
+      ...row,
+      conflict_status: this.computeConflictStatus(row),
+    };
+    conflict.conflict_status_label = CONFLICT_STATUS_LABELS[conflict.conflict_status!];
+    conflict.conflict_source = this.computeConflictSource(conflict);
+    return conflict;
+  }
+
+  static computeConflictStatus(row: any): ConflictStatus {
+    if (row.resolved === 1) {
+      return 'resolved';
+    }
+    if (row.approval_status === 'pending') {
+      return 'approval_pending';
+    }
+    if (row.approval_status === 'rejected') {
+      return 'approval_rejected';
+    }
+    if (row.order_status === 'confirmed') {
+      return 'confirmed';
+    }
+    if (row.order_status === 'assigned') {
+      return 'assigned';
+    }
+    return 'assigned';
+  }
+
+  static computeConflictSource(conflict: Conflict): string {
+    if (conflict.type === 'time_overlap') {
+      return '时段重叠';
+    }
+    if (conflict.type === 'overtime') {
+      return '加班冲突';
+    }
+    return conflict.type;
+  }
+
   static getAll(params?: {
     resolved?: boolean;
     technicianId?: number;
     dateFrom?: string;
     dateTo?: string;
     type?: ConflictType;
+    conflictStatus?: ConflictStatus;
   }): Conflict[] {
     let sql = `
       SELECT c.*, wo.order_no, wo.customer_name, wo.scheduled_start_time, wo.scheduled_end_time,
-             wo.status as order_status, t.name as technician_name
+             wo.status as order_status, t.name as technician_name,
+             a.id as approval_id, a.status as approval_status, a.reason as approval_reason,
+             a.applicant_name, a.approver_name, a.approval_remark
       FROM conflicts c
       LEFT JOIN work_orders wo ON c.order_id = wo.id
       LEFT JOIN technicians t ON c.technician_id = t.id
+      LEFT JOIN approvals a ON c.approval_id = a.id
       WHERE 1=1
     `;
     const paramsList: any[] = [];
@@ -52,40 +105,57 @@ export class ConflictService {
     }
 
     sql += ' ORDER BY c.created_at DESC';
-    return query<Conflict>(sql, paramsList);
+    const rows = query<any>(sql, paramsList);
+    let results = rows.map(r => this.enrichConflict(r));
+
+    if (params?.conflictStatus) {
+      results = results.filter(c => c.conflict_status === params.conflictStatus);
+    }
+
+    return results;
   }
 
   static getById(id: number): Conflict | null {
-    const conflicts = query<Conflict>(`
+    const rows = query<any>(`
       SELECT c.*, wo.order_no, wo.customer_name, wo.scheduled_start_time, wo.scheduled_end_time,
-             wo.status as order_status, t.name as technician_name
+             wo.status as order_status, t.name as technician_name,
+             a.id as approval_id, a.status as approval_status, a.reason as approval_reason,
+             a.applicant_name, a.approver_name, a.approval_remark
       FROM conflicts c
       LEFT JOIN work_orders wo ON c.order_id = wo.id
       LEFT JOIN technicians t ON c.technician_id = t.id
+      LEFT JOIN approvals a ON c.approval_id = a.id
       WHERE c.id = ?
     `, [id]);
-    return conflicts.length > 0 ? conflicts[0] : null;
+    return rows.length > 0 ? this.enrichConflict(rows[0]) : null;
   }
 
   static getByOrderId(orderId: number): Conflict[] {
-    return query<Conflict>(
-      `SELECT c.*, wo.order_no, wo.customer_name, wo.scheduled_start_time, wo.scheduled_end_time,
-              wo.status as order_status, t.name as technician_name
-       FROM conflicts c
-       LEFT JOIN work_orders wo ON c.order_id = wo.id
-       LEFT JOIN technicians t ON c.technician_id = t.id
-       WHERE c.order_id = ? ORDER BY c.created_at DESC`,
-      [orderId]
-    );
-  }
-
-  static getByTechnicianId(technicianId: number, resolved?: boolean): Conflict[] {
-    let sql = `
+    const rows = query<any>(`
       SELECT c.*, wo.order_no, wo.customer_name, wo.scheduled_start_time, wo.scheduled_end_time,
-             wo.status as order_status, t.name as technician_name
+             wo.status as order_status, t.name as technician_name,
+             a.id as approval_id, a.status as approval_status, a.reason as approval_reason,
+             a.applicant_name, a.approver_name, a.approval_remark
       FROM conflicts c
       LEFT JOIN work_orders wo ON c.order_id = wo.id
       LEFT JOIN technicians t ON c.technician_id = t.id
+      LEFT JOIN approvals a ON c.approval_id = a.id
+      WHERE c.order_id = ? ORDER BY c.created_at DESC`,
+      [orderId]
+    );
+    return rows.map(r => this.enrichConflict(r));
+  }
+
+  static getByTechnicianId(technicianId: number, resolved?: boolean, conflictStatus?: ConflictStatus): Conflict[] {
+    let sql = `
+      SELECT c.*, wo.order_no, wo.customer_name, wo.scheduled_start_time, wo.scheduled_end_time,
+             wo.status as order_status, t.name as technician_name,
+             a.id as approval_id, a.status as approval_status, a.reason as approval_reason,
+             a.applicant_name, a.approver_name, a.approval_remark
+      FROM conflicts c
+      LEFT JOIN work_orders wo ON c.order_id = wo.id
+      LEFT JOIN technicians t ON c.technician_id = t.id
+      LEFT JOIN approvals a ON c.approval_id = a.id
       WHERE c.technician_id = ?
     `;
     const params: any[] = [technicianId];
@@ -96,15 +166,27 @@ export class ConflictService {
     }
 
     sql += ' ORDER BY c.created_at DESC';
-    return query<Conflict>(sql, params);
+    const rows = query<any>(sql, params);
+    let results = rows.map(r => this.enrichConflict(r));
+
+    if (conflictStatus) {
+      results = results.filter(c => c.conflict_status === conflictStatus);
+    }
+
+    return results;
   }
 
-  static create(orderId: number, technicianId: number, type: ConflictType, description: string): Conflict {
+  static create(orderId: number, technicianId: number, type: ConflictType, description: string, approvalId?: number): Conflict {
     const id = runAndGetId(
-      'INSERT INTO conflicts (order_id, technician_id, type, description, resolved) VALUES (?, ?, ?, ?, 0)',
-      [orderId, technicianId, type, description]
+      'INSERT INTO conflicts (order_id, technician_id, type, description, resolved, approval_id) VALUES (?, ?, ?, ?, 0, ?)',
+      [orderId, technicianId, type, description, approvalId || null]
     );
     return this.getById(id)!;
+  }
+
+  static linkApproval(conflictId: number, approvalId: number): boolean {
+    const result = run('UPDATE conflicts SET approval_id = ? WHERE id = ?', [approvalId, conflictId]);
+    return result > 0;
   }
 
   static resolve(id: number): boolean {
@@ -231,6 +313,58 @@ export class ConflictService {
     return items;
   }
 
+  static getDetail(conflictId: number, isAdmin: boolean): ConflictDetail | null {
+    const conflict = this.getById(conflictId);
+    if (!conflict) return null;
+
+    const order = OrderService.getById(conflict.order_id);
+
+    let relatedApproval: Approval | undefined;
+    if (conflict.approval_id) {
+      const approvals = query<Approval>(`
+        SELECT a.*, wo.order_no, wo.customer_name
+        FROM approvals a
+        LEFT JOIN work_orders wo ON a.order_id = wo.id
+        WHERE a.id = ?
+      `, [conflict.approval_id]);
+      relatedApproval = approvals[0];
+    }
+
+    let overlappingItems: TechnicianScheduleItem[] = [];
+    if (conflict.scheduled_start_time && conflict.scheduled_end_time) {
+      overlappingItems = this.getTechnicianSchedule(
+        conflict.technician_id,
+        new Date(conflict.scheduled_start_time),
+        new Date(conflict.scheduled_end_time)
+      ).filter(item => item.order_id !== conflict.order_id);
+    }
+
+    const hasRejectedApproval = conflict.approval_status === 'rejected';
+    const isPendingApproval = conflict.approval_status === 'pending';
+
+    return {
+      conflict,
+      overlapping_items: overlappingItems,
+      related_order: order || undefined,
+      related_approval: relatedApproval,
+      available_actions: {
+        can_reassign: !conflict.resolved && order?.status !== 'completed' && order?.status !== 'cancelled',
+        can_apply_force_assign: !conflict.resolved && !hasRejectedApproval && !isPendingApproval && order?.status === 'pending',
+        can_force_assign: isAdmin && !conflict.resolved && !hasRejectedApproval && order?.status === 'pending',
+        can_approve: isAdmin && isPendingApproval,
+        can_reject: isAdmin && isPendingApproval,
+        requires_approval: !hasRejectedApproval && !isPendingApproval && conflict.type === 'time_overlap' && !conflict.resolved,
+        approval_reason: hasRejectedApproval
+          ? '该技师的强制派单申请已被驳回，不可再次申请，请更换技师'
+          : isPendingApproval
+          ? '申请正在等待主管审批'
+          : conflict.type === 'time_overlap'
+          ? '时段重叠，需要主管审批后方可强制派单'
+          : undefined,
+      },
+    };
+  }
+
   static checkAssignConflicts(
     orderId: number,
     technicianId: number,
@@ -254,6 +388,10 @@ export class ConflictService {
       (item) => item.type === 'approval_rejected'
     );
 
+    const hasPendingApproval = scheduleItems.some(
+      (item) => item.type === 'approval_pending'
+    );
+
     const conflicts: ConflictDetail[] = [];
 
     if (hasTimeOverlap) {
@@ -272,19 +410,10 @@ export class ConflictService {
         );
       }
 
-      conflicts.push({
-        conflict: conflictRecord,
-        overlapping_items: overlappingOrders,
-        available_actions: {
-          can_reassign: true,
-          can_apply_force_assign: !hasRejectedApproval,
-          can_force_assign: isAdmin && !hasRejectedApproval,
-          requires_approval: true,
-          approval_reason: hasRejectedApproval
-            ? '该技师的强制派单申请已被驳回，不可再次申请，请更换技师'
-            : '时段重叠，需要主管审批后方可强制派单',
-        },
-      });
+      const detail = this.getDetail(conflictRecord.id, isAdmin);
+      if (detail) {
+        conflicts.push(detail);
+      }
     }
 
     if (hasRejectedApproval) {
@@ -301,20 +430,53 @@ export class ConflictService {
           description: '存在已驳回的强制派单申请',
           resolved: 0,
           created_at: new Date().toISOString(),
+          conflict_status: 'approval_rejected',
+          conflict_status_label: '已驳回',
         },
         overlapping_items: rejectedApprovals,
         available_actions: {
           can_reassign: true,
           can_apply_force_assign: false,
           can_force_assign: false,
+          can_approve: false,
+          can_reject: false,
           requires_approval: false,
           approval_reason: '该技师的强制派单申请已被驳回，不可再次申请强制派单，请更换技师',
         },
       });
     }
 
+    if (!hasTimeOverlap && !hasRejectedApproval && hasPendingApproval) {
+      const pendingApprovals = scheduleItems.filter(
+        (item) => item.type === 'approval_pending'
+      );
+      conflicts.push({
+        conflict: {
+          id: 0,
+          order_id: orderId,
+          technician_id: technicianId,
+          type: 'time_overlap',
+          description: '存在待审批的强制派单申请',
+          resolved: 0,
+          created_at: new Date().toISOString(),
+          conflict_status: 'approval_pending',
+          conflict_status_label: '待审批',
+        },
+        overlapping_items: pendingApprovals,
+        available_actions: {
+          can_reassign: true,
+          can_apply_force_assign: false,
+          can_force_assign: false,
+          can_approve: isAdmin,
+          can_reject: isAdmin,
+          requires_approval: false,
+          approval_reason: '已有待审批申请，等待主管处理',
+        },
+      });
+    }
+
     return {
-      can_assign: !hasTimeOverlap && !hasRejectedApproval,
+      can_assign: !hasTimeOverlap && !hasRejectedApproval && !hasPendingApproval,
       conflicts,
       schedule_items: scheduleItems,
     };

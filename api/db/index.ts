@@ -154,9 +154,11 @@ function createTables(): void {
       type TEXT NOT NULL CHECK(type IN ('time_overlap', 'overtime')),
       description TEXT NOT NULL,
       resolved INTEGER NOT NULL DEFAULT 0,
+      approval_id INTEGER,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (order_id) REFERENCES work_orders(id) ON DELETE CASCADE,
-      FOREIGN KEY (technician_id) REFERENCES technicians(id)
+      FOREIGN KEY (technician_id) REFERENCES technicians(id),
+      FOREIGN KEY (approval_id) REFERENCES approvals(id)
     )
   `);
 
@@ -172,11 +174,19 @@ function migrateDatabase(): void {
   if (!db) return;
 
   try {
-    const cols = db.exec("PRAGMA table_info(approvals)");
-    const colNames = cols[0]?.values.map(row => row[1]) || [];
+    const approvalCols = db.exec("PRAGMA table_info(approvals)");
+    const approvalColNames = approvalCols[0]?.values.map(row => row[1]) || [];
 
-    if (!colNames.includes('target_technician_id')) {
+    if (!approvalColNames.includes('target_technician_id')) {
       db.run('ALTER TABLE approvals ADD COLUMN target_technician_id INTEGER REFERENCES technicians(id)');
+      saveDatabase();
+    }
+
+    const conflictCols = db.exec("PRAGMA table_info(conflicts)");
+    const conflictColNames = conflictCols[0]?.values.map(row => row[1]) || [];
+
+    if (!conflictColNames.includes('approval_id')) {
+      db.run('ALTER TABLE conflicts ADD COLUMN approval_id INTEGER REFERENCES approvals(id)');
       saveDatabase();
     }
   } catch (e) {

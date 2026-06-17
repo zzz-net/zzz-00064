@@ -211,7 +211,7 @@ router.put('/:id/force-assign', requireAuth, requireAdmin, (req: AuthRequest, re
 router.post('/:id/force-assign-request', requireAuth, (req: AuthRequest, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { technicianId, reason } = req.body;
+    const { technicianId, reason, conflictId } = req.body;
 
     if (!technicianId || !reason) {
       res.status(400).json({ success: false, error: '请选择技师并填写理由' });
@@ -227,8 +227,28 @@ router.post('/:id/force-assign-request', requireAuth, (req: AuthRequest, res) =>
       return;
     }
 
-    ApprovalService.create('force_assign', id, req.user!.id, req.user!.name, reason, technicianId);
+    const checkResult = ConflictService.checkAssignConflicts(
+      id,
+      technicianId,
+      req.user!.role === 'admin'
+    );
+
+    const approval = ApprovalService.create('force_assign', id, req.user!.id, req.user!.name, reason, technicianId);
     OrderService.addHistory(id, 'apply_force_assign', req.user!.id, req.user!.name, `申请强制派单: ${reason}`);
+
+    let targetConflictId = conflictId ? parseInt(conflictId as string) : null;
+    if (!targetConflictId) {
+      const existingConflicts = ConflictService.getByOrderId(id).filter(
+        c => c.technician_id === technicianId && !c.resolved
+      );
+      if (existingConflicts.length > 0) {
+        targetConflictId = existingConflicts[0].id;
+      }
+    }
+
+    if (targetConflictId) {
+      ConflictService.linkApproval(targetConflictId, approval.id);
+    }
 
     const order = OrderService.getById(id);
     res.json({ success: true, data: order, message: '强制派单申请已提交，等待管理员审批' });
