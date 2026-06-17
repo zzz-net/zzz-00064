@@ -79,7 +79,7 @@ export class ScheduleService {
     );
   }
 
-  static updateSchedule(technicianId: number, slots: Omit<ScheduleSlot>[]): void {
+  static updateSchedule(technicianId: number, slots: Omit<ScheduleSlot, 'id' | 'technician_id'>[]): void {
     run('DELETE FROM schedule_slots WHERE technician_id = ?', [technicianId]);
 
     slots.forEach((slot) => {

@@ -69,6 +69,7 @@ export interface Approval {
   applicant_id: number;
   applicant_name: string;
   reason: string;
+  target_technician_id?: number | null;
   status: ApprovalStatus;
   approver_id: number | null;
   approver_name: string | null;

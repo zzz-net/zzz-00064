@@ -35,7 +35,7 @@ export class OrderService {
       LEFT JOIN users u ON wo.created_by = u.id
       WHERE 1=1
     `;
-    const countSql = 'SELECT COUNT(*) as total FROM work_orders wo WHERE 1=1';
+    let countSql = 'SELECT COUNT(*) as total FROM work_orders wo WHERE 1=1';
     const queryParams: any[] = [];
     const countParams: any[] = [];
 
@@ -193,7 +193,13 @@ export class OrderService {
     const start = new Date(order.scheduled_start_time);
     const end = new Date(order.scheduled_end_time);
 
-    const hasConflict = this.hasTimeOverlap(order.technician_id, start, end, orderId);
+    const hasConflict = this.hasTimeOverlap(
+      order.technician_id,
+      start,
+      end,
+      orderId,
+      ['confirmed', 'in_progress']
+    );
     if (hasConflict) {
       throw new Error('该技师在此时段已有其他确认工单，无法确认');
     }
@@ -351,11 +357,18 @@ export class OrderService {
     return this.getById(orderId)!;
   }
 
-  static hasTimeOverlap(technicianId: number, startTime: Date, endTime: Date, excludeOrderId?: number): boolean {
+  static hasTimeOverlap(
+    technicianId: number,
+    startTime: Date,
+    endTime: Date,
+    excludeOrderId?: number,
+    statuses: string[] = ['assigned', 'confirmed', 'in_progress']
+  ): boolean {
+    const placeholders = statuses.map(() => '?').join(', ');
     let sql = `
       SELECT COUNT(*) as count FROM work_orders
       WHERE technician_id = ?
-      AND status IN ('assigned', 'confirmed', 'in_progress')
+      AND status IN (${placeholders})
       AND (
         (scheduled_start_time < ? AND scheduled_end_time > ?)
         OR (scheduled_start_time >= ? AND scheduled_start_time < ?)
@@ -363,6 +376,7 @@ export class OrderService {
     `;
     const params: any[] = [
       technicianId,
+      ...statuses,
       endTime.toISOString(),
       startTime.toISOString(),
       startTime.toISOString(),

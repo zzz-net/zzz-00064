@@ -193,7 +193,7 @@ router.post('/:id/force-assign-request', requireAuth, (req: AuthRequest, res) =>
       return;
     }
 
-    ApprovalService.create('force_assign', id, req.user!.id, req.user!.name, reason);
+    ApprovalService.create('force_assign', id, req.user!.id, req.user!.name, reason, technicianId);
     OrderService.addHistory(id, 'apply_force_assign', req.user!.id, req.user!.name, `申请强制派单: ${reason}`);
 
     const order = OrderService.getById(id);

@@ -27,6 +27,7 @@ export async function initDatabase(): Promise<Database> {
   if (fs.existsSync(DB_PATH)) {
     const buffer = fs.readFileSync(DB_PATH);
     db = new SQL.Database(buffer);
+    migrateDatabase();
   } else {
     db = new SQL.Database();
     createTables();
@@ -131,6 +132,7 @@ function createTables(): void {
       applicant_id INTEGER NOT NULL,
       applicant_name TEXT NOT NULL,
       reason TEXT NOT NULL,
+      target_technician_id INTEGER,
       status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')),
       approver_id INTEGER,
       approver_name TEXT,
@@ -139,7 +141,8 @@ function createTables(): void {
       approved_at DATETIME,
       FOREIGN KEY (order_id) REFERENCES work_orders(id) ON DELETE CASCADE,
       FOREIGN KEY (applicant_id) REFERENCES users(id),
-      FOREIGN KEY (approver_id) REFERENCES users(id)
+      FOREIGN KEY (approver_id) REFERENCES users(id),
+      FOREIGN KEY (target_technician_id) REFERENCES technicians(id)
     )
   `);
 
@@ -163,6 +166,22 @@ function createTables(): void {
   db.run('CREATE INDEX idx_histories_order ON order_histories(order_id)');
   db.run('CREATE INDEX idx_approvals_status ON approvals(status)');
   db.run('CREATE INDEX idx_conflicts_resolved ON conflicts(resolved)');
+}
+
+function migrateDatabase(): void {
+  if (!db) return;
+
+  try {
+    const cols = db.exec("PRAGMA table_info(approvals)");
+    const colNames = cols[0]?.values.map(row => row[1]) || [];
+
+    if (!colNames.includes('target_technician_id')) {
+      db.run('ALTER TABLE approvals ADD COLUMN target_technician_id INTEGER REFERENCES technicians(id)');
+      saveDatabase();
+    }
+  } catch (e) {
+    console.error('Migration error:', e);
+  }
 }
 
 function seedData(): void {

@@ -41,12 +41,13 @@ export class ApprovalService {
     orderId: number,
     applicantId: number,
     applicantName: string,
-    reason: string
+    reason: string,
+    targetTechnicianId?: number
   ): Approval {
     const id = runAndGetId(
-      `INSERT INTO approvals (type, order_id, applicant_id, applicant_name, reason, status)
-       VALUES (?, ?, ?, ?, ?, 'pending')`,
-      [type, orderId, applicantId, applicantName, reason]
+      `INSERT INTO approvals (type, order_id, applicant_id, applicant_name, reason, target_technician_id, status)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
+      [type, orderId, applicantId, applicantName, reason, targetTechnicianId || null]
     );
     return this.getById(id)!;
   }
@@ -72,11 +73,11 @@ export class ApprovalService {
     );
 
     if (approval.type === 'force_assign') {
-      const order = OrderService.getById(approval.order_id);
-      if (order && order.status === 'pending' && order.technician_id) {
+      const targetTechId = approval.target_technician_id;
+      if (targetTechId) {
         OrderService.forceAssign(
           approval.order_id,
-          order.technician_id,
+          targetTechId,
           approverId,
           approverName,
           `审批通过: ${remark || '强制派单'}`
