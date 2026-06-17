@@ -1,10 +1,12 @@
 import { create } from 'zustand';
 
+type UserRole = 'admin' | 'dispatcher' | 'customer_service' | 'supervisor';
+
 interface User {
   id: number;
   username: string;
   name: string;
-  role: 'admin' | 'dispatcher';
+  role: UserRole;
 }
 
 interface AuthState {

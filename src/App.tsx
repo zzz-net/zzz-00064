@@ -12,6 +12,9 @@ import Approvals from '@/pages/Approvals';
 import Reports from '@/pages/Reports';
 import ConflictCenter from '@/pages/ConflictCenter';
 import DispatchRules from '@/pages/DispatchRules';
+import ReturnVisits from '@/pages/ReturnVisits';
+import Appeals from '@/pages/Appeals';
+import AfterSaleConfig from '@/pages/AfterSaleConfig';
 
 function App() {
   const { checkAuth } = useAuthStore();
@@ -33,6 +36,9 @@ function App() {
         <Route path="/approvals" element={<Approvals />} />
         <Route path="/conflicts" element={<ConflictCenter />} />
         <Route path="/dispatch-rules" element={<DispatchRules />} />
+        <Route path="/after-sale/visits" element={<ReturnVisits />} />
+        <Route path="/after-sale/appeals" element={<Appeals />} />
+        <Route path="/after-sale/config" element={<AfterSaleConfig />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

@@ -1,8 +1,10 @@
+export type UserRole = 'admin' | 'dispatcher' | 'customer_service' | 'supervisor';
+
 export interface User {
   id: number;
   username: string;
   name: string;
-  role: 'admin' | 'dispatcher';
+  role: UserRole;
   created_at: string;
 }
 
@@ -215,6 +217,152 @@ export interface ImportResult {
   success: number;
   failed: number;
   errors: { row: number; reason: string; data: string }[];
+}
+
+export type ReturnVisitStatus = 'pending' | 'in_progress' | 'completed' | 'timeout' | 'cancelled';
+export type ReturnVisitResult = 'satisfied' | 'dissatisfied' | 'no_answer' | 'invalid_number' | 'refused';
+export type AppealStatus = 'pending' | 'accepted' | 'rejected' | 'reassigned' | 'resolved' | 'withdrawn';
+export type AfterSaleOperationType =
+  | 'config_created' | 'config_updated' | 'config_deleted'
+  | 'template_created' | 'template_updated' | 'template_deleted'
+  | 'category_created' | 'category_updated' | 'category_deleted'
+  | 'visit_created' | 'visit_updated' | 'visit_completed' | 'visit_cancelled'
+  | 'appeal_created' | 'appeal_accepted' | 'appeal_rejected'
+  | 'appeal_reassigned' | 'appeal_resolved' | 'appeal_withdrawn'
+  | 'import_success' | 'import_failure' | 'export_result';
+
+export interface ReturnVisitTemplate {
+  id: number;
+  name: string;
+  content: string;
+  enabled: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AppealCategory {
+  id: number;
+  name: string;
+  description: string;
+  enabled: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AfterSaleConfig {
+  id: number;
+  config_key: string;
+  config_value: string;
+  description: string;
+  updated_at: string;
+}
+
+export interface ReturnVisit {
+  id: number;
+  order_id: number;
+  order_no?: string;
+  customer_name?: string;
+  customer_phone?: string;
+  customer_address?: string;
+  service_type?: string;
+  template_id: number | null;
+  template_name?: string;
+  status: ReturnVisitStatus;
+  result: ReturnVisitResult | null;
+  remark: string | null;
+  image_required: number;
+  image_url: string | null;
+  timeout_hours: number;
+  initiator_id: number;
+  initiator_name: string;
+  handler_id: number | null;
+  handler_name: string | null;
+  initiated_at: string;
+  due_at: string;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReturnVisitHistory {
+  id: number;
+  visit_id: number;
+  action: string;
+  operator_id: number;
+  operator_name: string;
+  remark: string | null;
+  created_at: string;
+}
+
+export interface Appeal {
+  id: number;
+  visit_id: number;
+  order_id: number;
+  order_no?: string;
+  customer_name?: string;
+  category_id: number;
+  category_name?: string;
+  status: AppealStatus;
+  reason: string;
+  image_url: string | null;
+  image_required: number;
+  submitter_id: number;
+  submitter_name: string;
+  handler_id: number | null;
+  handler_name: string | null;
+  handle_remark: string | null;
+  timeout_hours: number;
+  submitted_at: string;
+  due_at: string;
+  handled_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AppealHistory {
+  id: number;
+  appeal_id: number;
+  action: string;
+  operator_id: number;
+  operator_name: string;
+  remark: string | null;
+  created_at: string;
+}
+
+export interface AfterSaleOperationLog {
+  id: number;
+  operation_type: AfterSaleOperationType;
+  related_id: number | null;
+  related_type: string | null;
+  operator_id: number;
+  operator_name: string;
+  detail: string;
+  created_at: string;
+}
+
+export interface ReturnVisitDetail {
+  visit: ReturnVisit;
+  histories: ReturnVisitHistory[];
+  appeals: Appeal[];
+  available_actions: {
+    can_edit: boolean;
+    can_complete: boolean;
+    can_cancel: boolean;
+    can_submit_appeal: boolean;
+  };
+}
+
+export interface AppealDetail {
+  appeal: Appeal;
+  histories: AppealHistory[];
+  visit?: ReturnVisit;
+  available_actions: {
+    can_accept: boolean;
+    can_reject: boolean;
+    can_reassign: boolean;
+    can_resolve: boolean;
+    can_withdraw: boolean;
+  };
 }
 
 export interface ApiResponse<T = any> {
