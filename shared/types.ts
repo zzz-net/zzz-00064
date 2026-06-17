@@ -1,0 +1,112 @@
+export interface User {
+  id: number;
+  username: string;
+  name: string;
+  role: 'admin' | 'dispatcher';
+  created_at: string;
+}
+
+export interface Technician {
+  id: number;
+  name: string;
+  phone: string;
+  skill: string;
+  status: 'active' | 'inactive';
+  created_at: string;
+}
+
+export interface ScheduleSlot {
+  id: number;
+  technician_id: number;
+  day_of_week: number;
+  start_time: string;
+  end_time: string;
+}
+
+export type OrderStatus = 'pending' | 'assigned' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled';
+
+export interface WorkOrder {
+  id: number;
+  order_no: string;
+  customer_name: string;
+  customer_phone: string;
+  customer_address: string;
+  service_type: string;
+  description: string;
+  status: OrderStatus;
+  technician_id: number | null;
+  technician_name?: string;
+  scheduled_start_time: string;
+  scheduled_end_time: string;
+  actual_start_time: string | null;
+  actual_end_time: string | null;
+  cancel_reason: string | null;
+  created_by: number;
+  created_by_name?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrderHistory {
+  id: number;
+  order_id: number;
+  action: string;
+  operator_id: number;
+  operator_name: string;
+  remark: string | null;
+  created_at: string;
+}
+
+export type ApprovalType = 'reassign' | 'force_assign' | 'overtime';
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
+
+export interface Approval {
+  id: number;
+  type: ApprovalType;
+  order_id: number;
+  order_no?: string;
+  customer_name?: string;
+  applicant_id: number;
+  applicant_name: string;
+  reason: string;
+  status: ApprovalStatus;
+  approver_id: number | null;
+  approver_name: string | null;
+  approval_remark: string | null;
+  created_at: string;
+  approved_at: string | null;
+}
+
+export type ConflictType = 'time_overlap' | 'overtime';
+
+export interface Conflict {
+  id: number;
+  order_id: number;
+  technician_id: number;
+  type: ConflictType;
+  description: string;
+  resolved: number;
+  created_at: string;
+}
+
+export interface DailyReport {
+  date: string;
+  totalOrders: number;
+  completedOrders: number;
+  cancelledOrders: number;
+  pendingOrders: number;
+  inProgressOrders: number;
+  technicianStats: {
+    technicianId: number;
+    technicianName: string;
+    completedCount: number;
+    totalWorkHours: number;
+  }[];
+}
+
+export interface ApiResponse<T = any> {
+  success: boolean;
+  data?: T;
+  message?: string;
+  error?: string;
+}
