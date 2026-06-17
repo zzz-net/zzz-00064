@@ -164,6 +164,39 @@ function createTables(): void {
     )
   `);
 
+  db.run(`
+    CREATE TABLE dispatch_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL CHECK(type IN ('max_daily_orders', 'min_service_interval', 'required_skill_match')),
+      severity TEXT NOT NULL CHECK(severity IN ('block', 'warn')),
+      value TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      description TEXT NOT NULL DEFAULT '',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE rule_operation_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      operation_type TEXT NOT NULL CHECK(operation_type IN ('rule_created', 'rule_updated', 'rule_enabled', 'rule_disabled', 'rule_deleted', 'rule_hit', 'rule_overridden', 'import_success', 'import_failure')),
+      rule_id INTEGER,
+      operator_id INTEGER NOT NULL,
+      operator_name TEXT NOT NULL,
+      detail TEXT NOT NULL DEFAULT '',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (rule_id) REFERENCES dispatch_rules(id) ON DELETE SET NULL,
+      FOREIGN KEY (operator_id) REFERENCES users(id)
+    )
+  `);
+
+  db.run('CREATE INDEX idx_dispatch_rules_type ON dispatch_rules(type)');
+  db.run('CREATE INDEX idx_dispatch_rules_enabled ON dispatch_rules(enabled)');
+  db.run('CREATE INDEX idx_rule_logs_operation ON rule_operation_logs(operation_type)');
+  db.run('CREATE INDEX idx_rule_logs_rule ON rule_operation_logs(rule_id)');
+
   db.run('CREATE INDEX idx_orders_status ON work_orders(status)');
   db.run('CREATE INDEX idx_orders_technician ON work_orders(technician_id)');
   db.run('CREATE INDEX idx_orders_scheduled ON work_orders(scheduled_start_time)');
@@ -240,6 +273,47 @@ function migrateDatabase(): void {
 
     if (!conflictColNames.includes('approval_id')) {
       db.run('ALTER TABLE conflicts ADD COLUMN approval_id INTEGER REFERENCES approvals(id)');
+      saveDatabase();
+    }
+
+    const tables = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
+    const tableNames = tables[0]?.values.map(row => row[0]) || [];
+
+    if (!tableNames.includes('dispatch_rules')) {
+      db.run(`
+        CREATE TABLE dispatch_rules (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          type TEXT NOT NULL CHECK(type IN ('max_daily_orders', 'min_service_interval', 'required_skill_match')),
+          severity TEXT NOT NULL CHECK(severity IN ('block', 'warn')),
+          value TEXT NOT NULL,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          description TEXT NOT NULL DEFAULT '',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      db.run('CREATE INDEX idx_dispatch_rules_type ON dispatch_rules(type)');
+      db.run('CREATE INDEX idx_dispatch_rules_enabled ON dispatch_rules(enabled)');
+      saveDatabase();
+    }
+
+    if (!tableNames.includes('rule_operation_logs')) {
+      db.run(`
+        CREATE TABLE rule_operation_logs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          operation_type TEXT NOT NULL CHECK(operation_type IN ('rule_created', 'rule_updated', 'rule_enabled', 'rule_disabled', 'rule_deleted', 'rule_hit', 'rule_overridden', 'import_success', 'import_failure')),
+          rule_id INTEGER,
+          operator_id INTEGER NOT NULL,
+          operator_name TEXT NOT NULL,
+          detail TEXT NOT NULL DEFAULT '',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (rule_id) REFERENCES dispatch_rules(id) ON DELETE SET NULL,
+          FOREIGN KEY (operator_id) REFERENCES users(id)
+        )
+      `);
+      db.run('CREATE INDEX idx_rule_logs_operation ON rule_operation_logs(operation_type)');
+      db.run('CREATE INDEX idx_rule_logs_rule ON rule_operation_logs(rule_id)');
       saveDatabase();
     }
   } catch (e) {

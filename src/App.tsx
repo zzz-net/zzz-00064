@@ -11,6 +11,7 @@ import OrderDetail from '@/pages/OrderDetail';
 import Approvals from '@/pages/Approvals';
 import Reports from '@/pages/Reports';
 import ConflictCenter from '@/pages/ConflictCenter';
+import DispatchRules from '@/pages/DispatchRules';
 
 function App() {
   const { checkAuth } = useAuthStore();
@@ -31,6 +32,7 @@ function App() {
         <Route path="/orders/:id" element={<OrderDetail />} />
         <Route path="/approvals" element={<Approvals />} />
         <Route path="/conflicts" element={<ConflictCenter />} />
+        <Route path="/dispatch-rules" element={<DispatchRules />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

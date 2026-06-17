@@ -1,6 +1,6 @@
 # 上门工单调度系统
 
-本地上门服务工单调度管理系统，支持技师班表维护、工单全生命周期管理、审批流程、冲突检测和日报导出。
+本地上门服务工单调度管理系统，支持技师班表维护、工单全生命周期管理、审批流程、冲突检测、调度规则管理和日报导出。
 
 ---
 
@@ -294,8 +294,10 @@ node test-regression.mjs
 ├── shared/types.ts           # 共享 TypeScript 类型
 ├── data/database.db          # SQLite 数据库文件
 ├── test-regression.mjs       # 基础回归测试
-├── test-conflict-center-v2.mjs   # 冲突处理中心完整回归测试（35 用例）
-├── test-conflict-center-persistence.mjs  # 冲突处理中心持久化验证（14 用例）
+├── test-conflict-center-v2.mjs   # 冲突处理中心完整回归测试（35 用例，撤回前版本）
+├── test-conflict-center-v3.mjs   # 冲突处理中心 v3 回归测试（7组33+用例，含撤回+CSV导出）
+├── test-conflict-center-v3-persistence.mjs  # v3 持久化验证（4组，撤回记录/导出/日志重启后一致）
+├── test-conflict-center-persistence.mjs  # 冲突处理中心旧版持久化验证
 ├── test-persistence-check.mjs    # 基础持久化验证脚本
 └── README.md
 ```

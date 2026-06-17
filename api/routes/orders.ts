@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { OrderService } from '../services/OrderService.js';
 import { ApprovalService } from '../services/ApprovalService.js';
 import { ConflictService } from '../services/ConflictService.js';
+import { DispatchRuleService } from '../services/DispatchRuleService.js';
 import { requireAuth, requireAdmin, AuthRequest } from '../middleware/auth.js';
 import { OrderStatus } from '../../shared/types.js';
 
@@ -88,6 +89,27 @@ router.put('/:id/assign', requireAuth, (req: AuthRequest, res) => {
       return;
     }
 
+    const order = OrderService.getById(id);
+    if (!order) {
+      res.status(404).json({ success: false, error: '工单不存在' });
+      return;
+    }
+
+    const rulePrecheck = DispatchRuleService.precheck(
+      id, technicianId, order.service_type,
+      order.scheduled_start_time, order.scheduled_end_time,
+      req.user!.id, req.user!.name, false
+    );
+
+    if (!rulePrecheck.can_proceed) {
+      res.status(409).json({
+        success: false,
+        error: '调度规则预检未通过',
+        rule_precheck: rulePrecheck,
+      });
+      return;
+    }
+
     const checkResult = ConflictService.checkAssignConflicts(
       id,
       technicianId,
@@ -99,12 +121,13 @@ router.put('/:id/assign', requireAuth, (req: AuthRequest, res) => {
         success: false,
         error: '该技师在此时段存在冲突',
         conflict_detail: checkResult,
+        rule_precheck: rulePrecheck,
       });
       return;
     }
 
-    const order = OrderService.assign(id, technicianId, req.user!.id, req.user!.name);
-    res.json({ success: true, data: order });
+    const assignedOrder = OrderService.assign(id, technicianId, req.user!.id, req.user!.name);
+    res.json({ success: true, data: assignedOrder, rule_precheck: rulePrecheck });
   } catch (error: any) {
     res.status(400).json({ success: false, error: error.message });
   }
@@ -169,8 +192,29 @@ router.put('/:id/reassign', requireAuth, (req: AuthRequest, res) => {
     }
 
     if (technicianId) {
-      const order = OrderService.reassign(id, technicianId, req.user!.id, req.user!.name, reason);
-      res.json({ success: true, data: order });
+      const order = OrderService.getById(id);
+      if (!order) {
+        res.status(404).json({ success: false, error: '工单不存在' });
+        return;
+      }
+
+      const rulePrecheck = DispatchRuleService.precheck(
+        id, technicianId, order.service_type,
+        order.scheduled_start_time, order.scheduled_end_time,
+        req.user!.id, req.user!.name, false
+      );
+
+      if (!rulePrecheck.can_proceed) {
+        res.status(409).json({
+          success: false,
+          error: '调度规则预检未通过',
+          rule_precheck: rulePrecheck,
+        });
+        return;
+      }
+
+      const reassignedOrder = OrderService.reassign(id, technicianId, req.user!.id, req.user!.name, reason);
+      res.json({ success: true, data: reassignedOrder, rule_precheck: rulePrecheck });
     } else {
       OrderService.applyReassign(id, req.user!.id, req.user!.name, reason);
       ApprovalService.create('reassign', id, req.user!.id, req.user!.name, reason);
@@ -201,8 +245,20 @@ router.put('/:id/force-assign', requireAuth, requireAdmin, (req: AuthRequest, re
       return;
     }
 
-    const order = OrderService.forceAssign(id, technicianId, req.user!.id, req.user!.name, reason);
-    res.json({ success: true, data: order });
+    const order = OrderService.getById(id);
+    if (!order) {
+      res.status(404).json({ success: false, error: '工单不存在' });
+      return;
+    }
+
+    const rulePrecheck = DispatchRuleService.precheck(
+      id, technicianId, order.service_type,
+      order.scheduled_start_time, order.scheduled_end_time,
+      req.user!.id, req.user!.name, true
+    );
+
+    const forceAssignedOrder = OrderService.forceAssign(id, technicianId, req.user!.id, req.user!.name, reason);
+    res.json({ success: true, data: forceAssignedOrder, rule_precheck: rulePrecheck });
   } catch (error: any) {
     res.status(400).json({ success: false, error: error.message });
   }
@@ -227,6 +283,18 @@ router.post('/:id/force-assign-request', requireAuth, (req: AuthRequest, res) =>
       return;
     }
 
+    const order = OrderService.getById(id);
+    if (!order) {
+      res.status(404).json({ success: false, error: '工单不存在' });
+      return;
+    }
+
+    const rulePrecheck = DispatchRuleService.precheck(
+      id, technicianId, order.service_type,
+      order.scheduled_start_time, order.scheduled_end_time,
+      req.user!.id, req.user!.name, true
+    );
+
     const checkResult = ConflictService.checkAssignConflicts(
       id,
       technicianId,
@@ -250,8 +318,8 @@ router.post('/:id/force-assign-request', requireAuth, (req: AuthRequest, res) =>
       ConflictService.linkApproval(targetConflictId, approval.id);
     }
 
-    const order = OrderService.getById(id);
-    res.json({ success: true, data: order, message: '强制派单申请已提交，等待管理员审批' });
+    const orderData = OrderService.getById(id);
+    res.json({ success: true, data: orderData, message: '强制派单申请已提交，等待管理员审批', rule_precheck: rulePrecheck });
   } catch (error: any) {
     res.status(400).json({ success: false, error: error.message });
   }

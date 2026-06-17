@@ -16,6 +16,7 @@ import orderRoutes from './routes/orders.js'
 import approvalRoutes from './routes/approvals.js'
 import reportRoutes from './routes/reports.js'
 import conflictRoutes from './routes/conflicts.js'
+import dispatchRuleRoutes from './routes/dispatch-rules.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -55,6 +56,7 @@ app.use('/api/orders', orderRoutes)
 app.use('/api/approvals', approvalRoutes)
 app.use('/api/reports', reportRoutes)
 app.use('/api/conflicts', conflictRoutes)
+app.use('/api/dispatch-rules', dispatchRuleRoutes)
 
 app.use(
   '/api/health',

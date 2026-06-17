@@ -168,6 +168,55 @@ export interface DailyReport {
   }[];
 }
 
+export type DispatchRuleType = 'max_daily_orders' | 'min_service_interval' | 'required_skill_match';
+export type DispatchRuleSeverity = 'block' | 'warn';
+
+export interface DispatchRule {
+  id: number;
+  name: string;
+  type: DispatchRuleType;
+  severity: DispatchRuleSeverity;
+  value: string;
+  enabled: number;
+  description: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RulePrecheckItem {
+  rule_id: number;
+  rule_name: string;
+  rule_type: DispatchRuleType;
+  severity: DispatchRuleSeverity;
+  passed: boolean;
+  message: string;
+}
+
+export interface RulePrecheckResult {
+  can_proceed: boolean;
+  has_warnings: boolean;
+  items: RulePrecheckItem[];
+}
+
+export type RuleOperationType = 'rule_created' | 'rule_updated' | 'rule_enabled' | 'rule_disabled' | 'rule_deleted' | 'rule_hit' | 'rule_overridden' | 'import_success' | 'import_failure';
+
+export interface RuleOperationLog {
+  id: number;
+  operation_type: RuleOperationType;
+  rule_id: number | null;
+  operator_id: number;
+  operator_name: string;
+  detail: string;
+  created_at: string;
+}
+
+export interface ImportResult {
+  total: number;
+  success: number;
+  failed: number;
+  errors: { row: number; reason: string; data: string }[];
+}
+
 export interface ApiResponse<T = any> {
   success: boolean;
   data?: T;
