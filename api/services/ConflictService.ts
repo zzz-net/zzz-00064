@@ -189,6 +189,11 @@ export class ConflictService {
     return result > 0;
   }
 
+  static unlinkApproval(conflictId: number): boolean {
+    const result = run('UPDATE conflicts SET approval_id = NULL WHERE id = ?', [conflictId]);
+    return result > 0;
+  }
+
   static resolve(id: number): boolean {
     const result = run('UPDATE conflicts SET resolved = 1 WHERE id = ?', [id]);
     return result > 0;
@@ -313,7 +318,7 @@ export class ConflictService {
     return items;
   }
 
-  static getDetail(conflictId: number, isAdmin: boolean): ConflictDetail | null {
+  static getDetail(conflictId: number, isAdmin: boolean, currentUserId?: number): ConflictDetail | null {
     const conflict = this.getById(conflictId);
     if (!conflict) return null;
 
@@ -341,6 +346,13 @@ export class ConflictService {
 
     const hasRejectedApproval = conflict.approval_status === 'rejected';
     const isPendingApproval = conflict.approval_status === 'pending';
+    const canWithdraw = !!(
+      !conflict.resolved &&
+      isPendingApproval &&
+      relatedApproval &&
+      currentUserId !== undefined &&
+      relatedApproval.applicant_id === currentUserId
+    );
 
     return {
       conflict,
@@ -353,6 +365,7 @@ export class ConflictService {
         can_force_assign: isAdmin && !conflict.resolved && !hasRejectedApproval && order?.status === 'pending',
         can_approve: isAdmin && isPendingApproval,
         can_reject: isAdmin && isPendingApproval,
+        can_withdraw: canWithdraw,
         requires_approval: !hasRejectedApproval && !isPendingApproval && conflict.type === 'time_overlap' && !conflict.resolved,
         approval_reason: hasRejectedApproval
           ? '该技师的强制派单申请已被驳回，不可再次申请，请更换技师'
@@ -440,6 +453,7 @@ export class ConflictService {
           can_force_assign: false,
           can_approve: false,
           can_reject: false,
+          can_withdraw: false,
           requires_approval: false,
           approval_reason: '该技师的强制派单申请已被驳回，不可再次申请强制派单，请更换技师',
         },
@@ -469,6 +483,7 @@ export class ConflictService {
           can_force_assign: false,
           can_approve: isAdmin,
           can_reject: isAdmin,
+          can_withdraw: false,
           requires_approval: false,
           approval_reason: '已有待审批申请，等待主管处理',
         },
@@ -495,5 +510,93 @@ export class ConflictService {
       AND status = 'rejected'
     `, [orderId, technicianId]);
     return result[0].count > 0;
+  }
+
+  static exportCsv(params?: {
+    resolved?: boolean;
+    technicianId?: number;
+    dateFrom?: string;
+    dateTo?: string;
+    type?: ConflictType;
+    conflictStatus?: ConflictStatus;
+  }): string {
+    const conflicts = this.getAll(params);
+
+    const headers = [
+      'ID',
+      '工单编号',
+      '客户姓名',
+      '技师',
+      '冲突类型',
+      '冲突来源',
+      '冲突状态',
+      '冲突描述',
+      '预约开始时间',
+      '预约结束时间',
+      '关联审批ID',
+      '审批状态',
+      '申请理由',
+      '申请人',
+      '审批人',
+      '审批意见',
+      '创建时间',
+      '是否已解决',
+    ];
+
+    const typeLabels: Record<string, string> = {
+      time_overlap: '时段重叠',
+      overtime: '加班冲突',
+    };
+
+    const conflictStatusLabels: Record<string, string> = {
+      assigned: '已分配',
+      confirmed: '已确认',
+      approval_pending: '待审批',
+      approval_rejected: '已驳回',
+      resolved: '已解决',
+    };
+
+    const approvalStatusLabels: Record<string, string> = {
+      pending: '待审批',
+      approved: '已通过',
+      rejected: '已驳回',
+      withdrawn: '已撤回',
+    };
+
+    const escapeCsv = (val: any): string => {
+      if (val === null || val === undefined) return '';
+      const str = String(val);
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const rows = conflicts.map(c => [
+      c.id,
+      c.order_no || '',
+      c.customer_name || '',
+      c.technician_name || '',
+      typeLabels[c.type] || c.type,
+      c.conflict_source || '',
+      conflictStatusLabels[c.conflict_status || ''] || c.conflict_status || '',
+      c.description,
+      c.scheduled_start_time || '',
+      c.scheduled_end_time || '',
+      c.approval_id || '',
+      c.approval_status ? (approvalStatusLabels[c.approval_status] || c.approval_status) : '',
+      c.approval_reason || '',
+      c.applicant_name || '',
+      c.approver_name || '',
+      c.approval_remark || '',
+      c.created_at,
+      c.resolved === 1 ? '是' : '否',
+    ]);
+
+    const csv = [headers, ...rows]
+      .map(row => row.map(escapeCsv).join(','))
+      .join('\n');
+
+    return '\ufeff' + csv;
   }
 }

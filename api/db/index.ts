@@ -133,12 +133,14 @@ function createTables(): void {
       applicant_name TEXT NOT NULL,
       reason TEXT NOT NULL,
       target_technician_id INTEGER,
-      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')),
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected', 'withdrawn')),
       approver_id INTEGER,
       approver_name TEXT,
       approval_remark TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       approved_at DATETIME,
+      withdrawn_at DATETIME,
+      withdraw_reason TEXT,
       FOREIGN KEY (order_id) REFERENCES work_orders(id) ON DELETE CASCADE,
       FOREIGN KEY (applicant_id) REFERENCES users(id),
       FOREIGN KEY (approver_id) REFERENCES users(id),
@@ -179,6 +181,57 @@ function migrateDatabase(): void {
 
     if (!approvalColNames.includes('target_technician_id')) {
       db.run('ALTER TABLE approvals ADD COLUMN target_technician_id INTEGER REFERENCES technicians(id)');
+      saveDatabase();
+    }
+
+    if (!approvalColNames.includes('withdrawn_at')) {
+      db.run('ALTER TABLE approvals ADD COLUMN withdrawn_at DATETIME');
+      saveDatabase();
+    }
+
+    if (!approvalColNames.includes('withdraw_reason')) {
+      db.run('ALTER TABLE approvals ADD COLUMN withdraw_reason TEXT');
+      saveDatabase();
+    }
+
+    const sqliteMaster = db.exec(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='approvals'"
+    );
+    const createSql = sqliteMaster[0]?.values[0]?.[0] as string || '';
+    const hasWithdrawnInCheck = createSql.includes("'withdrawn'");
+
+    if (!hasWithdrawnInCheck) {
+      console.log('[migrate] 重建 approvals 表以更新 CHECK 约束 (添加 withdrawn)...');
+
+      db.run(`
+        CREATE TABLE approvals_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          type TEXT NOT NULL CHECK(type IN ('reassign', 'force_assign', 'overtime')),
+          order_id INTEGER NOT NULL,
+          applicant_id INTEGER NOT NULL,
+          applicant_name TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          target_technician_id INTEGER,
+          status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected', 'withdrawn')),
+          approver_id INTEGER,
+          approver_name TEXT,
+          approval_remark TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          approved_at DATETIME,
+          withdrawn_at DATETIME,
+          withdraw_reason TEXT,
+          FOREIGN KEY (order_id) REFERENCES work_orders(id) ON DELETE CASCADE,
+          FOREIGN KEY (applicant_id) REFERENCES users(id),
+          FOREIGN KEY (approver_id) REFERENCES users(id),
+          FOREIGN KEY (target_technician_id) REFERENCES technicians(id)
+        )
+      `);
+
+      const colsToCopy = approvalColNames.join(', ');
+      db.run(`INSERT INTO approvals_new (${colsToCopy}) SELECT ${colsToCopy} FROM approvals`);
+      db.run('DROP TABLE approvals');
+      db.run('ALTER TABLE approvals_new RENAME TO approvals');
+      db.run('CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status)');
       saveDatabase();
     }
 

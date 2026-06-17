@@ -53,6 +53,46 @@ export class ApprovalService {
     return this.getById(id)!;
   }
 
+  static withdraw(
+    id: number,
+    operatorId: number,
+    operatorName: string,
+    reason?: string
+  ): Approval {
+    const approval = this.getById(id);
+    if (!approval) throw new Error('审批不存在');
+
+    if (approval.status !== 'pending') {
+      throw new Error('只有待审批的申请可以撤回');
+    }
+
+    if (approval.applicant_id !== operatorId) {
+      throw new Error('只有申请人可以撤回申请');
+    }
+
+    run(
+      `UPDATE approvals
+       SET status = 'withdrawn', withdrawn_at = CURRENT_TIMESTAMP, withdraw_reason = ?
+       WHERE id = ?`,
+      [reason || null, id]
+    );
+
+    const conflicts = ConflictService.getByOrderId(approval.order_id).filter(
+      c => c.approval_id === id
+    );
+    conflicts.forEach(c => ConflictService.unlinkApproval(c.id));
+
+    OrderService.addHistory(
+      approval.order_id,
+      `approval_withdrawn_${approval.type}`,
+      operatorId,
+      operatorName,
+      `撤回申请: ${reason || '无理由'}`
+    );
+
+    return this.getById(id)!;
+  }
+
   static approve(
     id: number,
     approverId: number,
@@ -137,5 +177,74 @@ export class ApprovalService {
     );
 
     return this.getById(id)!;
+  }
+
+  static exportCsv(params?: {
+    status?: ApprovalStatus;
+    type?: ApprovalType;
+  }): string {
+    const approvals = this.getAll(params?.status, params?.type);
+
+    const headers = [
+      'ID',
+      '类型',
+      '工单编号',
+      '客户姓名',
+      '申请人',
+      '申请理由',
+      '目标技师ID',
+      '状态',
+      '审批人',
+      '审批意见',
+      '申请时间',
+      '审批时间',
+      '撤回时间',
+      '撤回原因',
+    ];
+
+    const typeLabels: Record<string, string> = {
+      reassign: '改派申请',
+      force_assign: '强制派单',
+      overtime: '加班申请',
+    };
+
+    const statusLabels: Record<string, string> = {
+      pending: '待审批',
+      approved: '已通过',
+      rejected: '已驳回',
+      withdrawn: '已撤回',
+    };
+
+    const escapeCsv = (val: any): string => {
+      if (val === null || val === undefined) return '';
+      const str = String(val);
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const rows = approvals.map(a => [
+      a.id,
+      typeLabels[a.type] || a.type,
+      a.order_no || '',
+      a.customer_name || '',
+      a.applicant_name,
+      a.reason,
+      a.target_technician_id || '',
+      statusLabels[a.status] || a.status,
+      a.approver_name || '',
+      a.approval_remark || '',
+      a.created_at,
+      a.approved_at || '',
+      a.withdrawn_at || '',
+      a.withdraw_reason || '',
+    ]);
+
+    const csv = [headers, ...rows]
+      .map(row => row.map(escapeCsv).join(','))
+      .join('\n');
+
+    return '\ufeff' + csv;
   }
 }

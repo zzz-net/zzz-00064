@@ -24,11 +24,34 @@ router.get('/', requireAuth, (req, res) => {
   }
 });
 
+router.get('/export', requireAuth, (req, res) => {
+  try {
+    const { resolved, technicianId, dateFrom, dateTo, type, conflictStatus } = req.query;
+
+    const csv = ConflictService.exportCsv({
+      resolved: resolved !== undefined ? resolved === 'true' : undefined,
+      technicianId: technicianId ? parseInt(technicianId as string) : undefined,
+      dateFrom: dateFrom as string,
+      dateTo: dateTo as string,
+      type: type as ConflictType,
+      conflictStatus: conflictStatus as ConflictStatus,
+    });
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="conflicts-${timestamp}.csv"`);
+    res.send(csv);
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.get('/:id', requireAuth, (req: AuthRequest, res) => {
   try {
     const id = parseInt(req.params.id);
     const isAdmin = req.user?.role === 'admin';
-    const detail = ConflictService.getDetail(id, isAdmin);
+    const userId = req.user?.id;
+    const detail = ConflictService.getDetail(id, isAdmin, userId);
 
     if (!detail) {
       res.status(404).json({ success: false, error: '冲突记录不存在' });

@@ -17,6 +17,23 @@ router.get('/', requireAuth, (req, res) => {
   }
 });
 
+router.get('/export', requireAuth, (req, res) => {
+  try {
+    const { status, type } = req.query;
+    const csv = ApprovalService.exportCsv({
+      status: status as any,
+      type: type as any,
+    });
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="approvals-${timestamp}.csv"`);
+    res.send(csv);
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.get('/:id', requireAuth, (req, res) => {
   try {
     const id = parseInt(req.params.id);
@@ -30,6 +47,18 @@ router.get('/:id', requireAuth, (req, res) => {
     res.json({ success: true, data: approval });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.put('/:id/withdraw', requireAuth, (req: AuthRequest, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const { reason } = req.body;
+
+    const approval = ApprovalService.withdraw(id, req.user!.id, req.user!.name, reason);
+    res.json({ success: true, data: approval });
+  } catch (error: any) {
+    res.status(400).json({ success: false, error: error.message });
   }
 });
 

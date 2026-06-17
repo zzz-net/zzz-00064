@@ -58,7 +58,7 @@ export interface OrderHistory {
 }
 
 export type ApprovalType = 'reassign' | 'force_assign' | 'overtime';
-export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'withdrawn';
 
 export interface Approval {
   id: number;
@@ -76,6 +76,8 @@ export interface Approval {
   approval_remark: string | null;
   created_at: string;
   approved_at: string | null;
+  withdrawn_at: string | null;
+  withdraw_reason: string | null;
 }
 
 export type ConflictType = 'time_overlap' | 'overtime';
@@ -139,6 +141,7 @@ export interface ConflictDetail {
     can_force_assign: boolean;
     can_approve: boolean;
     can_reject: boolean;
+    can_withdraw: boolean;
     requires_approval: boolean;
     approval_reason?: string;
   };

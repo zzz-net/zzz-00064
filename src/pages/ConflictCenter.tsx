@@ -17,6 +17,8 @@ import {
   ShieldAlert,
   UserCheck,
   UserX,
+  Download,
+  Undo2,
 } from 'lucide-react';
 import Layout from '@/components/Layout/Layout';
 import { api } from '@/lib/api';
@@ -81,9 +83,11 @@ export default function ConflictCenter() {
   const [showApplyModal, setShowApplyModal] = useState(false);
   const [showApproveModal, setShowApproveModal] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
+  const [showWithdrawModal, setShowWithdrawModal] = useState(false);
   const [applyReason, setApplyReason] = useState('');
   const [approveRemark, setApproveRemark] = useState('');
   const [rejectRemark, setRejectRemark] = useState('');
+  const [withdrawReason, setWithdrawReason] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
 
   useEffect(() => {
@@ -223,6 +227,51 @@ export default function ConflictCenter() {
     }
   };
 
+  const handleWithdraw = async () => {
+    if (!conflictDetail?.related_approval) return;
+    if (!confirm('确认撤回该强制派单申请？撤回后可重新发起')) return;
+    setActionLoading(true);
+    try {
+      await api.put(`/approvals/${conflictDetail.related_approval.id}/withdraw`, {
+        reason: withdrawReason,
+      });
+      alert('已撤回申请');
+      setShowWithdrawModal(false);
+      setWithdrawReason('');
+      loadConflicts();
+      if (selectedConflict) loadConflictDetail(selectedConflict);
+    } catch (err: any) {
+      alert(err.message || '操作失败');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleExportCsv = async () => {
+    try {
+      const params = new URLSearchParams();
+      if (statusFilter) {
+        params.set('conflictStatus', statusFilter);
+      }
+      if (technicianFilter) {
+        params.set('technicianId', technicianFilter);
+      }
+      if (typeFilter) {
+        params.set('type', typeFilter);
+      }
+      if (dateFrom) {
+        params.set('dateFrom', `${dateFrom}T00:00:00.000Z`);
+      }
+      if (dateTo) {
+        params.set('dateTo', `${dateTo}T23:59:59.999Z`);
+      }
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      await api.download(`/conflicts/export?${params.toString()}`, `conflicts-${timestamp}.csv`);
+    } catch (err: any) {
+      alert(err.message || '导出失败');
+    }
+  };
+
   const handleReassign = () => {
     if (!selectedConflict) return;
     window.location.href = `/orders/${selectedConflict.order_id}`;
@@ -338,6 +387,14 @@ export default function ConflictCenter() {
                 >
                   <RefreshCw className="w-4 h-4" />
                   刷新
+                </button>
+
+                <button
+                  onClick={handleExportCsv}
+                  className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm flex items-center gap-1"
+                >
+                  <Download className="w-4 h-4" />
+                  导出 CSV
                 </button>
               </div>
             </div>
@@ -629,6 +686,15 @@ export default function ConflictCenter() {
                           驳回申请
                         </button>
                       )}
+                      {conflictDetail?.available_actions.can_withdraw && (
+                        <button
+                          onClick={() => setShowWithdrawModal(true)}
+                          className="w-full px-4 py-2 bg-slate-600 hover:bg-slate-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                        >
+                          <Undo2 className="w-4 h-4" />
+                          撤回申请
+                        </button>
+                      )}
                       {conflictDetail?.available_actions.can_apply_force_assign && (
                         <button
                           onClick={() => setShowApplyModal(true)}
@@ -795,6 +861,53 @@ export default function ConflictCenter() {
                 className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 disabled:opacity-50"
               >
                 {actionLoading ? '处理中...' : '确认驳回'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showWithdrawModal && conflictDetail?.related_approval && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl w-full max-w-md">
+            <div className="p-4 border-b border-slate-200">
+              <h3 className="font-semibold text-slate-800">撤回强制派单申请</h3>
+            </div>
+            <div className="p-4 space-y-4">
+              <div className="text-sm text-slate-600">
+                工单：<span className="font-medium text-slate-800">{conflictDetail.related_approval.order_no}</span>
+              </div>
+              <div className="text-sm text-slate-600">
+                申请理由：<span className="font-medium text-slate-800">{conflictDetail.related_approval.reason}</span>
+              </div>
+              <div className="text-xs text-orange-700 bg-orange-50 p-3 rounded-lg border border-orange-200">
+                <Undo2 className="w-4 h-4 inline mr-1" />
+                撤回后，工单将回到可重新派单或改派的状态，您可再次发起申请。
+              </div>
+              <div>
+                <label className="block text-sm text-slate-600 mb-1">撤回原因（可选）</label>
+                <textarea
+                  value={withdrawReason}
+                  onChange={(e) => setWithdrawReason(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-slate-500 focus:border-slate-500 outline-none"
+                  rows={3}
+                  placeholder="请填写撤回原因..."
+                />
+              </div>
+            </div>
+            <div className="p-4 border-t border-slate-200 flex justify-end gap-2">
+              <button
+                onClick={() => { setShowWithdrawModal(false); setWithdrawReason(''); }}
+                className="px-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleWithdraw}
+                disabled={actionLoading}
+                className="px-4 py-2 bg-slate-600 text-white rounded-lg text-sm hover:bg-slate-700 disabled:opacity-50"
+              >
+                {actionLoading ? '处理中...' : '确认撤回'}
               </button>
             </div>
           </div>

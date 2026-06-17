@@ -51,24 +51,42 @@ npx tsc --noEmit
 npm run build
 ```
 
-### 6. 运行冲突处理中心完整回归测试
+### 6. 运行冲突处理中心完整回归测试（含撤回+CSV导出）
 
 ```bash
-node test-conflict-center-v2.mjs
+node test-conflict-center-v3.mjs
 ```
 
-测试通过数预期 35/35，覆盖状态筛选、组合筛选、权限拦截、重叠冲突、审批流程、驳回拦截。
+测试通过数预期 33+/33+，共 7 组用例，覆盖：
+- **撤回权限边界**：只有申请人本人能撤、非申请人被拒、状态必须是 pending
+- **撤回后同步**：审批列表/冲突列表/操作日志三端同步、工单回到可派单状态
+- **撤回后再次申请**：撤回后可重新发起强派申请
+- **已审批禁止撤回**：已驳回/已通过的记录无法撤回
+- **冲突详情权限**：调度员看自己发起的 pending 可撤，管理员看不可撤
+- **审批 CSV 导出**：按状态筛选导出、含 UTF-8 BOM 中文兼容
+- **冲突 CSV 导出**：按技师/状态/日期组合筛选导出
+- **撤回后重发全链路**：撤回 → 重新申请 → 主管通过 → 派单成功 → 确认完成
 
-### 7. 验证重启后数据持久化
+运行结束后会输出：`测试数据标记 UNIQUE_TOKEN=XXXXXXXX`（请记下用于持久化验证）
+
+### 7. 验证重启后数据持久化（撤回记录+导出+日志）
 
 ```bash
-# 先跑完整回归测试，记下输出的 UNIQUE_TOKEN
-node test-conflict-center-v2.mjs
-# 输出：测试数据标记 UNIQUE_TOKEN=XXXXXXXX
+# 步骤1：先跑 v3 完整回归测试，记下输出的 UNIQUE_TOKEN
+node test-conflict-center-v3.mjs
+# 输出末尾：测试数据标记 UNIQUE_TOKEN=XXXXXXXX
 
-# 重启后端服务后，运行持久化验证
-node test-conflict-center-persistence.mjs <UNIQUE_TOKEN>
+# 步骤2：重启后端服务（Ctrl+C 停掉，再 npm run server:dev）
+
+# 步骤3：运行持久化验证脚本，传入刚才的 UNIQUE_TOKEN
+node test-conflict-center-v3-persistence.mjs <UNIQUE_TOKEN>
 ```
+
+持久化验证覆盖 4 组：
+- **撤回记录持久化**：重启后 withdrawn 列表查到、状态/撤回时间/原因正确、已审批仍禁撤
+- **工单状态 + 操作日志**：工单最终状态正确、历史含 withdraw/approved/confirm 三条动作
+- **CSV 导出重启后仍可用**：审批 withdrawn 筛选导出含标记、冲突表头/筛选正常
+- **冲突解除关联持久化**：撤回的冲突 approval_id 已解除、重发通过的 approval_id 保留
 
 ### 8. 运行基础回归测试
 
@@ -276,7 +294,8 @@ node test-regression.mjs
 ├── shared/types.ts           # 共享 TypeScript 类型
 ├── data/database.db          # SQLite 数据库文件
 ├── test-regression.mjs       # 基础回归测试
-├── test-conflict-center.mjs  # 冲突处理中心回归测试
-├── test-persistence-check.mjs # 持久化验证脚本
+├── test-conflict-center-v2.mjs   # 冲突处理中心完整回归测试（35 用例）
+├── test-conflict-center-persistence.mjs  # 冲突处理中心持久化验证（14 用例）
+├── test-persistence-check.mjs    # 基础持久化验证脚本
 └── README.md
 ```
