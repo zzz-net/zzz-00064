@@ -4,74 +4,95 @@ const BASE_URL = 'http://localhost:3001/api';
 let cookie = '';
 
 async function apiRequest(path, options = {}) {
-  const headers = {
-    'Content-Type': 'application/json',
-    ...options.headers,
-  };
-  if (cookie) {
-    headers.Cookie = cookie;
-  }
-
-  const response = await fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers,
-  });
-
+  const headers = { 'Content-Type': 'application/json', ...options.headers };
+  if (cookie) headers.Cookie = cookie;
+  const response = await fetch(`${BASE_URL}${path}`, { ...options, headers });
   const setCookie = response.headers.get('set-cookie');
-  if (setCookie) {
-    cookie = setCookie.split(';')[0];
-  }
-
+  if (setCookie) cookie = setCookie.split(';')[0];
   const data = await response.json();
   return { response, data };
 }
 
-async function captureState(label) {
-  console.log(`\n--- ${label} ---`);
-
-  const { data: orders } = await apiRequest('/orders?limit=50');
-  console.log(`工单总数: ${orders.data?.total || 0}`);
-  const orderList = orders.data?.orders || [];
-
-  const bug1Orders = orderList.filter(o => o.customer_name?.includes('重叠测试'));
-  console.log(`Bug1 测试工单: ${bug1Orders.length} 张`);
-  bug1Orders.forEach(o => {
-    console.log(`  - ${o.order_no} | ${o.status} | ${o.technician_name || '未分配'}`);
-  });
-
-  const bug2Order = orderList.find(o => o.customer_name?.includes('审批测试'));
-  if (bug2Order) {
-    console.log(`Bug2 测试工单: ${bug2Order.order_no} | ${bug2Order.status} | ${bug2Order.technician_name || '未分配'}`);
-  }
-
-  const { data: approvals } = await apiRequest('/approvals');
-  console.log(`审批记录总数: ${approvals.data?.length || 0}`);
-  const forceAssignApproval = approvals.data?.find(a => a.order_no === bug2Order?.order_no);
-  if (forceAssignApproval) {
-    console.log(`  Bug2 审批: ${forceAssignApproval.status} | 目标技师ID: ${forceAssignApproval.target_technician_id}`);
-  }
-
-  const { data: conflicts } = await apiRequest('/conflicts');
-  console.log(`冲突记录: ${conflicts.data?.length || 0} 条`);
-
-  const { data: technicians } = await apiRequest('/technicians');
-  console.log(`技师数量: ${technicians.data?.length || 0}`);
-
-  return { orderList, approvals, conflicts, technicians };
+const RUN_ID = process.argv[2];
+if (!RUN_ID) {
+  console.error('用法: node test-persistence-check.mjs <RUN_ID>');
+  process.exit(1);
 }
 
 async function main() {
-  console.log('=== 数据持久化验证 ===\n');
+  console.log(`=== 重启后持久化验证（RUN_ID: ${RUN_ID}）===\n`);
 
   await apiRequest('/auth/login', {
     method: 'POST',
     body: JSON.stringify({ username: 'admin', password: '123456' }),
   });
 
-  const before = await captureState('重启前状态');
+  const { data: orders } = await apiRequest('/orders?limit=200');
+  const myOrders = orders.data?.filter(o =>
+    (o.customer_name || '').includes(RUN_ID)
+  ) || [];
 
-  console.log('\n请重启服务器后再次运行此脚本验证');
-  console.log('或者使用 --check 参数仅检查当前状态');
+  console.log(`找到本次回归工单 ${myOrders.length} 张（期望 5）`);
+
+  const bug1A = myOrders.find(o => o.customer_name.includes('BUG1-A'));
+  const bug1B = myOrders.find(o => o.customer_name.includes('BUG1-B'));
+  const bug2  = myOrders.find(o => o.customer_name.includes('BUG2-'));
+  const assignA = myOrders.find(o => o.customer_name.includes('ASSIGN-A'));
+  const assignB = myOrders.find(o => o.customer_name.includes('ASSIGN-B'));
+
+  let allOk = true;
+
+  function check(label, actual, expected) {
+    const ok = actual === expected;
+    const icon = ok ? '✅' : '❌';
+    console.log(`${icon} ${label}: 实际=${actual} 期望=${expected}`);
+    if (!ok) allOk = false;
+  }
+
+  console.log('\n--- Bug 1：重叠时段确认 ---');
+  check('BUG1-A 状态', bug1A?.status, 'confirmed');
+  check('BUG1-A 技师', bug1A?.technician_name, '李师傅');
+  check('BUG1-B 状态', bug1B?.status, 'assigned');
+  check('BUG1-B 技师', bug1B?.technician_name, '李师傅');
+
+  console.log('\n--- Bug 2：强制派单审批 ---');
+  check('BUG2 状态', bug2?.status, 'completed');
+  check('BUG2 技师', bug2?.technician_name, '王师傅');
+
+  console.log('\n--- 正常分配重叠验证 ---');
+  check('ASSIGN-A 状态', assignA?.status, 'assigned');
+  check('ASSIGN-A 技师', assignA?.technician_name, '陈师傅');
+  check('ASSIGN-B 状态', assignB?.status, 'pending');
+  check('ASSIGN-B 技师', assignB?.technician_name || '未分配', '未分配');
+
+  console.log('\n--- 审批记录 ---');
+  const { data: approvals } = await apiRequest('/approvals');
+  const bug2Approval = approvals.data?.find(a =>
+    a.type === 'force_assign' && a.status === 'approved' && (a.reason || '').includes(RUN_ID)
+  );
+  check('强制派单审批存在', bug2Approval ? '存在' : '不存在', '存在');
+  check('审批目标技师ID', bug2Approval?.target_technician_id, 2);
+
+  console.log('\n--- BUG2 工单历史记录 ---');
+  if (bug2) {
+    const { data: history } = await apiRequest(`/orders/${bug2.id}/history`);
+    const actions = history.data?.map(h => h.action) || [];
+    console.log(`历史记录数量: ${actions.length}（期望 ≥ 6）`);
+    ['create', 'apply_force_assign', 'force_assign', 'confirm', 'start_progress', 'complete'].forEach(a => {
+      const has = actions.includes(a);
+      console.log(`  ${has ? '✅' : '❌'} ${a}: ${has ? '存在' : '缺失'}`);
+      if (!has) allOk = false;
+    });
+  }
+
+  console.log('\n========================================');
+  if (allOk) {
+    console.log('✅ 全部数据持久化验证通过！重启后所有状态、技师分配、审批记录、历史记录都保持一致');
+    process.exit(0);
+  } else {
+    console.log('❌ 有数据丢失或不一致');
+    process.exit(1);
+  }
 }
 
 main();
