@@ -15,6 +15,9 @@ import DispatchRules from '@/pages/DispatchRules';
 import ReturnVisits from '@/pages/ReturnVisits';
 import Appeals from '@/pages/Appeals';
 import AfterSaleConfig from '@/pages/AfterSaleConfig';
+import KnowledgeBase from '@/pages/KnowledgeBase';
+import KnowledgeReview from '@/pages/KnowledgeReview';
+import KnowledgeHitRecords from '@/pages/KnowledgeHitRecords';
 
 function App() {
   const { checkAuth } = useAuthStore();
@@ -39,6 +42,9 @@ function App() {
         <Route path="/after-sale/visits" element={<ReturnVisits />} />
         <Route path="/after-sale/appeals" element={<Appeals />} />
         <Route path="/after-sale/config" element={<AfterSaleConfig />} />
+        <Route path="/knowledge/entries" element={<KnowledgeBase />} />
+        <Route path="/knowledge/review" element={<KnowledgeReview />} />
+        <Route path="/knowledge/hits" element={<KnowledgeHitRecords />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

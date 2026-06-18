@@ -12,6 +12,9 @@ import {
   Phone,
   Settings,
   MessageSquareWarning,
+  BookOpen,
+  ClipboardCheck,
+  Target,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/useAuthStore';
 
@@ -22,6 +25,9 @@ const menuItems = [
   { path: '/orders', label: '工单列表', icon: ClipboardList, roles: ['admin', 'dispatcher', 'customer_service', 'supervisor'] },
   { path: '/after-sale/visits', label: '回访管理', icon: Phone, roles: ['admin', 'customer_service', 'supervisor'] },
   { path: '/after-sale/appeals', label: '申诉处理中心', icon: MessageSquareWarning, roles: ['admin', 'customer_service', 'supervisor'] },
+  { path: '/knowledge/entries', label: '知识库管理', icon: BookOpen, roles: ['admin', 'customer_service', 'supervisor'] },
+  { path: '/knowledge/review', label: '知识库审核中心', icon: ClipboardCheck, roles: ['admin', 'supervisor'] },
+  { path: '/knowledge/hits', label: '知识库命中记录', icon: Target, roles: ['admin', 'customer_service', 'supervisor'] },
   { path: '/conflicts', label: '冲突处理中心', icon: AlertTriangle, roles: ['admin', 'dispatcher'] },
   { path: '/dispatch-rules', label: '调度规则', icon: Shield, roles: ['admin', 'dispatcher'] },
   { path: '/after-sale/config', label: '售后配置管理', icon: Settings, roles: ['admin', 'supervisor'] },

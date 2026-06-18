@@ -371,3 +371,156 @@ export interface ApiResponse<T = any> {
   message?: string;
   error?: string;
 }
+
+// ==================== 售后知识库与处理预案 ====================
+
+export type KnowledgeStatus = 'draft' | 'pending_review' | 'published' | 'disabled' | 'archived';
+export type KnowledgeEffectiveness = 'helpful' | 'partially_helpful' | 'not_helpful';
+
+export type KnowledgeOperationType =
+  | 'category_created' | 'category_updated' | 'category_deleted'
+  | 'knowledge_created' | 'knowledge_updated' | 'knowledge_submitted'
+  | 'knowledge_approved' | 'knowledge_rejected' | 'knowledge_published'
+  | 'knowledge_disabled' | 'knowledge_rollback' | 'knowledge_archived'
+  | 'version_created' | 'hit_recorded' | 'feedback_submitted'
+  | 'config_updated' | 'import_success' | 'import_failure' | 'export_result';
+
+export interface KnowledgeCategory {
+  id: number;
+  name: string;
+  description: string;
+  sort_order: number;
+  enabled: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeEntry {
+  id: number;
+  title: string;
+  question: string;
+  answer: string;
+  applicable_products: string;
+  escalation_condition: string;
+  escalation_threshold: number;
+  category_id: number;
+  category_name?: string;
+  current_version_id: number | null;
+  latest_version_id: number | null;
+  status: KnowledgeStatus;
+  hits: number;
+  helpful_count: number;
+  version: number;
+  review_remark: string | null;
+  expires_at: string | null;
+  tags: string;
+  created_by: number;
+  created_by_name?: string;
+  published_by: number | null;
+  published_by_name?: string | null;
+  disabled_by: number | null;
+  disabled_by_name?: string | null;
+  created_at: string;
+  submitted_at: string | null;
+  approved_at: string | null;
+  published_at: string | null;
+  disabled_at: string | null;
+  updated_at: string;
+}
+
+export interface KnowledgeVersion {
+  id: number;
+  entry_id: number;
+  version_no: number;
+  title: string;
+  question: string;
+  answer: string;
+  applicable_products: string;
+  escalation_condition: string;
+  escalation_threshold: number;
+  category_id: number;
+  status: KnowledgeStatus;
+  change_log: string;
+  expires_at: string | null;
+  tags: string;
+  created_by: number;
+  created_by_name?: string;
+  created_at: string;
+  submitted_at: string | null;
+  approved_at: string | null;
+  published_at: string | null;
+}
+
+export interface KnowledgeHitRecord {
+  id: number;
+  entry_id: number;
+  entry_title?: string;
+  version_id: number;
+  version_no?: number;
+  order_id: number;
+  order_no?: string;
+  category_id: number;
+  category_name?: string;
+  matched_by: string;
+  matched_keywords: string;
+  score: number;
+  used: number;
+  effectiveness: KnowledgeEffectiveness | null;
+  feedback: string | null;
+  operator_id: number;
+  operator_name: string;
+  created_at: string;
+  used_at: string | null;
+  feedback_at: string | null;
+}
+
+export interface KnowledgeOperationLog {
+  id: number;
+  operation_type: KnowledgeOperationType;
+  related_id: number | null;
+  related_type: string | null;
+  operator_id: number;
+  operator_name: string;
+  detail: string;
+  created_at: string;
+}
+
+export interface KnowledgeConfig {
+  id: number;
+  config_key: string;
+  config_value: string;
+  description: string;
+  updated_at: string;
+}
+
+export interface KnowledgeEntryDetail {
+  entry: KnowledgeEntry;
+  versions: KnowledgeVersion[];
+  hit_records: KnowledgeHitRecord[];
+  available_actions: {
+    can_edit: boolean;
+    can_submit: boolean;
+    can_approve: boolean;
+    can_reject: boolean;
+    can_publish: boolean;
+    can_disable: boolean;
+    can_rollback: boolean;
+    can_delete: boolean;
+  };
+}
+
+export interface KnowledgeMatchResult {
+  entry: KnowledgeEntry;
+  matched_keywords: string[];
+  score: number;
+  matched_by: string;
+}
+
+export interface KnowledgeQueryParams {
+  status?: KnowledgeStatus;
+  category_id?: number;
+  created_by?: number;
+  keyword?: string;
+  limit?: number;
+  offset?: number;
+}

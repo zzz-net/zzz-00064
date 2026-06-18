@@ -344,6 +344,152 @@ function createTables(): void {
   db.run('CREATE INDEX idx_appeals_due ON appeals(due_at)');
   db.run('CREATE INDEX idx_as_logs_operation ON after_sale_operation_logs(operation_type)');
   db.run('CREATE INDEX idx_as_logs_related ON after_sale_operation_logs(related_type, related_id)');
+
+  db.run(`
+    CREATE TABLE knowledge_categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE knowledge_entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      question TEXT NOT NULL DEFAULT '',
+      answer TEXT NOT NULL DEFAULT '',
+      applicable_products TEXT NOT NULL DEFAULT '',
+      escalation_condition TEXT NOT NULL DEFAULT '',
+      escalation_threshold INTEGER NOT NULL DEFAULT 3,
+      category_id INTEGER NOT NULL,
+      current_version_id INTEGER,
+      latest_version_id INTEGER,
+      status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft', 'pending_review', 'published', 'disabled', 'archived')),
+      hits INTEGER NOT NULL DEFAULT 0,
+      helpful_count INTEGER NOT NULL DEFAULT 0,
+      version INTEGER NOT NULL DEFAULT 1,
+      review_remark TEXT,
+      expires_at DATETIME,
+      tags TEXT NOT NULL DEFAULT '',
+      created_by INTEGER NOT NULL,
+      created_by_name TEXT NOT NULL,
+      published_by INTEGER,
+      published_by_name TEXT,
+      disabled_by INTEGER,
+      disabled_by_name TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      submitted_at DATETIME,
+      approved_at DATETIME,
+      published_at DATETIME,
+      disabled_at DATETIME,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (category_id) REFERENCES knowledge_categories(id),
+      FOREIGN KEY (created_by) REFERENCES users(id),
+      FOREIGN KEY (published_by) REFERENCES users(id),
+      FOREIGN KEY (disabled_by) REFERENCES users(id)
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE knowledge_versions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entry_id INTEGER NOT NULL,
+      version_no INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      question TEXT NOT NULL DEFAULT '',
+      answer TEXT NOT NULL DEFAULT '',
+      applicable_products TEXT NOT NULL DEFAULT '',
+      escalation_condition TEXT NOT NULL DEFAULT '',
+      escalation_threshold INTEGER NOT NULL DEFAULT 3,
+      category_id INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft', 'pending_review', 'published', 'disabled', 'archived')),
+      change_log TEXT NOT NULL DEFAULT '',
+      expires_at DATETIME,
+      tags TEXT NOT NULL DEFAULT '',
+      created_by INTEGER NOT NULL,
+      created_by_name TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      submitted_at DATETIME,
+      approved_at DATETIME,
+      published_at DATETIME,
+      FOREIGN KEY (entry_id) REFERENCES knowledge_entries(id) ON DELETE CASCADE,
+      FOREIGN KEY (category_id) REFERENCES knowledge_categories(id),
+      FOREIGN KEY (created_by) REFERENCES users(id)
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE knowledge_hit_records (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entry_id INTEGER NOT NULL,
+      entry_title TEXT NOT NULL,
+      version_id INTEGER NOT NULL,
+      version_no INTEGER NOT NULL,
+      order_id INTEGER NOT NULL,
+      order_no TEXT NOT NULL,
+      category_id INTEGER NOT NULL,
+      category_name TEXT NOT NULL,
+      matched_by TEXT NOT NULL DEFAULT 'category',
+      matched_keywords TEXT NOT NULL DEFAULT '',
+      score INTEGER NOT NULL DEFAULT 0,
+      used INTEGER NOT NULL DEFAULT 0,
+      effectiveness TEXT CHECK(effectiveness IN ('helpful', 'partially_helpful', 'not_helpful')),
+      feedback TEXT,
+      operator_id INTEGER NOT NULL,
+      operator_name TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      used_at DATETIME,
+      feedback_at DATETIME,
+      FOREIGN KEY (entry_id) REFERENCES knowledge_entries(id) ON DELETE CASCADE,
+      FOREIGN KEY (version_id) REFERENCES knowledge_versions(id),
+      FOREIGN KEY (order_id) REFERENCES work_orders(id),
+      FOREIGN KEY (category_id) REFERENCES knowledge_categories(id),
+      FOREIGN KEY (operator_id) REFERENCES users(id)
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE knowledge_operation_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      operation_type TEXT NOT NULL,
+      related_id INTEGER,
+      related_type TEXT,
+      operator_id INTEGER NOT NULL,
+      operator_name TEXT NOT NULL,
+      detail TEXT NOT NULL DEFAULT '',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (operator_id) REFERENCES users(id)
+    )
+  `);
+
+  db.run('CREATE INDEX idx_kc_enabled ON knowledge_categories(enabled)');
+  db.run('CREATE INDEX idx_ke_status ON knowledge_entries(status)');
+  db.run('CREATE INDEX idx_ke_category ON knowledge_entries(category_id)');
+  db.run('CREATE INDEX idx_ke_created_by ON knowledge_entries(created_by)');
+  db.run('CREATE INDEX idx_ke_title ON knowledge_entries(title)');
+  db.run('CREATE INDEX idx_kv_entry ON knowledge_versions(entry_id)');
+  db.run('CREATE INDEX idx_kv_version ON knowledge_versions(entry_id, version_no)');
+  db.run('CREATE INDEX idx_khr_entry ON knowledge_hit_records(entry_id)');
+  db.run('CREATE INDEX idx_khr_order ON knowledge_hit_records(order_id)');
+  db.run('CREATE INDEX idx_khr_operator ON knowledge_hit_records(operator_id)');
+  db.run('CREATE INDEX idx_khr_created ON knowledge_hit_records(created_at)');
+  db.run('CREATE INDEX idx_kol_operation ON knowledge_operation_logs(operation_type)');
+  db.run('CREATE INDEX idx_kol_related ON knowledge_operation_logs(related_type, related_id)');
+
+  db.run(`
+    CREATE TABLE knowledge_configs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      config_key TEXT UNIQUE NOT NULL,
+      config_value TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
 }
 
 function migrateDatabase(): void {
@@ -668,6 +814,220 @@ function migrateDatabase(): void {
       saveDatabase();
     }
 
+    // ===== 知识库相关表迁移 =====
+    if (!tableNames.includes('knowledge_categories')) {
+      db.run(`
+        CREATE TABLE knowledge_categories (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT UNIQUE NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          sort_order INTEGER NOT NULL DEFAULT 0,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      db.run('CREATE INDEX idx_kc_enabled ON knowledge_categories(enabled)');
+      saveDatabase();
+    }
+
+    if (!tableNames.includes('knowledge_entries')) {
+      db.run(`
+        CREATE TABLE knowledge_entries (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          title TEXT NOT NULL,
+          question TEXT NOT NULL DEFAULT '',
+          answer TEXT NOT NULL DEFAULT '',
+          applicable_products TEXT NOT NULL DEFAULT '',
+          escalation_condition TEXT NOT NULL DEFAULT '',
+          escalation_threshold INTEGER NOT NULL DEFAULT 3,
+          category_id INTEGER NOT NULL,
+          current_version_id INTEGER,
+          latest_version_id INTEGER,
+          status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft', 'pending_review', 'published', 'disabled', 'archived')),
+          hits INTEGER NOT NULL DEFAULT 0,
+          helpful_count INTEGER NOT NULL DEFAULT 0,
+          version INTEGER NOT NULL DEFAULT 1,
+          review_remark TEXT,
+          expires_at DATETIME,
+          tags TEXT NOT NULL DEFAULT '',
+          created_by INTEGER NOT NULL,
+          created_by_name TEXT NOT NULL,
+          published_by INTEGER,
+          published_by_name TEXT,
+          disabled_by INTEGER,
+          disabled_by_name TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          submitted_at DATETIME,
+          approved_at DATETIME,
+          published_at DATETIME,
+          disabled_at DATETIME,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (category_id) REFERENCES knowledge_categories(id),
+          FOREIGN KEY (created_by) REFERENCES users(id),
+          FOREIGN KEY (published_by) REFERENCES users(id),
+          FOREIGN KEY (disabled_by) REFERENCES users(id)
+        )
+      `);
+      db.run('CREATE INDEX idx_ke_status ON knowledge_entries(status)');
+      db.run('CREATE INDEX idx_ke_category ON knowledge_entries(category_id)');
+      db.run('CREATE INDEX idx_ke_created_by ON knowledge_entries(created_by)');
+      db.run('CREATE INDEX idx_ke_title ON knowledge_entries(title)');
+      saveDatabase();
+    }
+
+    if (!tableNames.includes('knowledge_versions')) {
+      db.run(`
+        CREATE TABLE knowledge_versions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          entry_id INTEGER NOT NULL,
+          version_no INTEGER NOT NULL,
+          title TEXT NOT NULL,
+          question TEXT NOT NULL DEFAULT '',
+          answer TEXT NOT NULL DEFAULT '',
+          applicable_products TEXT NOT NULL DEFAULT '',
+          escalation_condition TEXT NOT NULL DEFAULT '',
+          escalation_threshold INTEGER NOT NULL DEFAULT 3,
+          category_id INTEGER NOT NULL,
+          status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft', 'pending_review', 'published', 'disabled', 'archived')),
+          change_log TEXT NOT NULL DEFAULT '',
+          expires_at DATETIME,
+          tags TEXT NOT NULL DEFAULT '',
+          created_by INTEGER NOT NULL,
+          created_by_name TEXT NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          submitted_at DATETIME,
+          approved_at DATETIME,
+          published_at DATETIME,
+          FOREIGN KEY (entry_id) REFERENCES knowledge_entries(id) ON DELETE CASCADE,
+          FOREIGN KEY (category_id) REFERENCES knowledge_categories(id),
+          FOREIGN KEY (created_by) REFERENCES users(id)
+        )
+      `);
+      db.run('CREATE INDEX idx_kv_entry ON knowledge_versions(entry_id)');
+      db.run('CREATE INDEX idx_kv_version ON knowledge_versions(entry_id, version_no)');
+      saveDatabase();
+    }
+
+    if (!tableNames.includes('knowledge_hit_records')) {
+      db.run(`
+        CREATE TABLE knowledge_hit_records (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          entry_id INTEGER NOT NULL,
+          entry_title TEXT NOT NULL,
+          version_id INTEGER NOT NULL,
+          version_no INTEGER NOT NULL,
+          order_id INTEGER NOT NULL,
+          order_no TEXT NOT NULL,
+          category_id INTEGER NOT NULL,
+          category_name TEXT NOT NULL,
+          matched_by TEXT NOT NULL DEFAULT 'category',
+          matched_keywords TEXT NOT NULL DEFAULT '',
+          score INTEGER NOT NULL DEFAULT 0,
+          used INTEGER NOT NULL DEFAULT 0,
+          effectiveness TEXT CHECK(effectiveness IN ('helpful', 'partially_helpful', 'not_helpful')),
+          feedback TEXT,
+          operator_id INTEGER NOT NULL,
+          operator_name TEXT NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          used_at DATETIME,
+          feedback_at DATETIME,
+          FOREIGN KEY (entry_id) REFERENCES knowledge_entries(id) ON DELETE CASCADE,
+          FOREIGN KEY (version_id) REFERENCES knowledge_versions(id),
+          FOREIGN KEY (order_id) REFERENCES work_orders(id),
+          FOREIGN KEY (category_id) REFERENCES knowledge_categories(id),
+          FOREIGN KEY (operator_id) REFERENCES users(id)
+        )
+      `);
+      db.run('CREATE INDEX idx_khr_entry ON knowledge_hit_records(entry_id)');
+      db.run('CREATE INDEX idx_khr_order ON knowledge_hit_records(order_id)');
+      db.run('CREATE INDEX idx_khr_operator ON knowledge_hit_records(operator_id)');
+      db.run('CREATE INDEX idx_khr_created ON knowledge_hit_records(created_at)');
+      saveDatabase();
+    }
+
+    if (!tableNames.includes('knowledge_operation_logs')) {
+      db.run(`
+        CREATE TABLE knowledge_operation_logs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          operation_type TEXT NOT NULL,
+          related_id INTEGER,
+          related_type TEXT,
+          operator_id INTEGER NOT NULL,
+          operator_name TEXT NOT NULL,
+          detail TEXT NOT NULL DEFAULT '',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (operator_id) REFERENCES users(id)
+        )
+      `);
+      db.run('CREATE INDEX idx_kol_operation ON knowledge_operation_logs(operation_type)');
+      db.run('CREATE INDEX idx_kol_related ON knowledge_operation_logs(related_type, related_id)');
+      saveDatabase();
+    }
+
+    // 知识库默认配置
+    const kConfigExists = db.exec(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_configs'"
+    );
+    if (!kConfigExists || kConfigExists.length === 0 || !kConfigExists[0]?.values || kConfigExists[0].values.length === 0) {
+      db.run(`
+        CREATE TABLE knowledge_configs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          config_key TEXT UNIQUE NOT NULL,
+          config_value TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      saveDatabase();
+    }
+    const kDefaults = [
+      ['knowledge_auto_match', '1', '工单处理时自动匹配知识库（0否，1是）'],
+      ['knowledge_match_threshold', '60', '关键词匹配最低分数阈值（0-100）'],
+      ['knowledge_max_results', '5', '单次匹配返回最大条目数'],
+    ];
+    const tables2 = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_configs'");
+    if (tables2.length > 0 && tables2[0].values.length > 0) {
+      for (const [key, value, desc] of kDefaults) {
+        const exists = db.exec(
+          `SELECT id FROM knowledge_configs WHERE config_key = ?`,
+          [key]
+        );
+        if (!exists || exists.length === 0 || !exists[0]?.values || exists[0].values.length === 0) {
+          db.run(
+            "INSERT INTO knowledge_configs (config_key, config_value, description) VALUES (?, ?, ?)",
+            [key, value, desc]
+          );
+        }
+      }
+      saveDatabase();
+    }
+
+    // 知识库默认分类
+    const catDefaults = [
+      ['空调类', '空调安装、维修、清洗相关问题', 1],
+      ['水电类', '水电维修、安装、故障排查相关问题', 2],
+      ['家电类', '家电维修、保养、使用说明相关问题', 3],
+      ['管道疏通类', '管道疏通、马桶、地漏相关问题', 4],
+      ['通用流程', '通用服务流程、收费标准、投诉处理等', 5],
+    ];
+    const catsExist = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_categories'");
+    if (catsExist.length > 0 && catsExist[0].values.length > 0) {
+      for (const [name, desc, sort] of catDefaults) {
+        const exists = db.exec(
+          `SELECT id FROM knowledge_categories WHERE name = ?`,
+          [name]
+        );
+        if (!exists || exists.length === 0 || !exists[0]?.values || exists[0].values.length === 0) {
+          db.run(
+            "INSERT INTO knowledge_categories (name, description, sort_order) VALUES (?, ?, ?)",
+            [name, desc, sort]
+          );
+        }
+      }
+      saveDatabase();
+    }
+
     const csExists = query("SELECT id FROM users WHERE username = 'customer_service'");
     if (csExists.length === 0) {
       const csHash = bcrypt.hashSync('123456', 10);
@@ -776,6 +1136,135 @@ function seedData(): void {
   db.run(
     "INSERT INTO after_sale_configs (config_key, config_value, description) VALUES (?, ?, ?)",
     ['appeal_image_required', '0', '申诉是否必须上传图片凭证（0否，1是）']
+  );
+
+  // ===== 知识库默认配置 =====
+  db.run(
+    "INSERT INTO knowledge_configs (config_key, config_value, description) VALUES (?, ?, ?)",
+    ['knowledge_auto_match', '1', '工单处理时自动匹配知识库（0否，1是）']
+  );
+  db.run(
+    "INSERT INTO knowledge_configs (config_key, config_value, description) VALUES (?, ?, ?)",
+    ['knowledge_match_threshold', '60', '关键词匹配最低分数阈值（0-100）']
+  );
+  db.run(
+    "INSERT INTO knowledge_configs (config_key, config_value, description) VALUES (?, ?, ?)",
+    ['knowledge_max_results', '5', '单次匹配返回最大条目数']
+  );
+
+  // ===== 知识库默认分类 =====
+  db.run(
+    "INSERT INTO knowledge_categories (name, description, sort_order) VALUES (?, ?, ?)",
+    ['空调类', '空调安装、维修、清洗相关问题', 1]
+  );
+  db.run(
+    "INSERT INTO knowledge_categories (name, description, sort_order) VALUES (?, ?, ?)",
+    ['水电类', '水电维修、安装、故障排查相关问题', 2]
+  );
+  db.run(
+    "INSERT INTO knowledge_categories (name, description, sort_order) VALUES (?, ?, ?)",
+    ['家电类', '家电维修、保养、使用说明相关问题', 3]
+  );
+  db.run(
+    "INSERT INTO knowledge_categories (name, description, sort_order) VALUES (?, ?, ?)",
+    ['管道疏通类', '管道疏通、马桶、地漏相关问题', 4]
+  );
+  db.run(
+    "INSERT INTO knowledge_categories (name, description, sort_order) VALUES (?, ?, ?)",
+    ['通用流程', '通用服务流程、收费标准、投诉处理等', 5]
+  );
+
+  // ===== 示例知识条目（已发布）=====
+  const now = new Date().toISOString();
+
+  // 示例 1 - 空调不制冷
+  db.run(
+    `INSERT INTO knowledge_entries (title, question, answer, applicable_products, escalation_condition, escalation_threshold, category_id, current_version_id, latest_version_id, status, version, tags, created_by, created_by_name, published_by, published_by_name, created_at, submitted_at, approved_at, published_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', 1, ?, 1, ?, 1, ?, ?, ?, ?, ?)`,
+    [
+      '空调不制冷怎么处理',
+      '客户报修空调不制冷，上门后应检查哪些部位？',
+      '1. 先检查电源是否正常、遥控器电池和设置是否正确；\n2. 查看过滤网是否积灰堵塞，建议每两周清洗；\n3. 检查室外机散热片是否被杂物遮挡；\n4. 听压缩机启动声音，判断是否氟利昂泄漏；\n5. 如以上均正常，用压力表测量氟压，R22 正常压力4.5-5.5kg。',
+      '家用挂机 2匹以下',
+      '连续3台同型号出现同样问题，判定为批次问题需升级技术主管',
+      3,
+      1,
+      1,
+      1,
+      '空调,制冷,氟利昂,过滤网',
+      '系统管理员',
+      '系统管理员',
+      now, now, now, now
+    ]
+  );
+  const eid1 = getLastInsertId();
+  db.run(
+    `INSERT INTO knowledge_versions (entry_id, version_no, title, question, answer, applicable_products, escalation_condition, escalation_threshold, category_id, status, change_log, tags, created_by, created_by_name, created_at, submitted_at, approved_at, published_at)
+     VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, 'published', '初始版本', ?, 1, ?, ?, ?, ?, ?)`,
+    [eid1, '空调不制冷怎么处理', '客户报修空调不制冷，上门后应检查哪些部位？',
+      '1. 先检查电源是否正常、遥控器电池和设置是否正确；\n2. 查看过滤网是否积灰堵塞，建议每两周清洗；\n3. 检查室外机散热片是否被杂物遮挡；\n4. 听压缩机启动声音，判断是否氟利昂泄漏；\n5. 如以上均正常，用压力表测量氟压，R22 正常压力4.5-5.5kg。',
+      '家用挂机 2匹以下', '连续3台同型号出现同样问题，判定为批次问题需升级技术主管', 3, 1,
+      '空调,制冷,氟利昂,过滤网', '系统管理员', now, now, now, now]
+  );
+
+  // 示例 2 - 水龙头漏水
+  db.run(
+    `INSERT INTO knowledge_entries (title, question, answer, applicable_products, escalation_condition, escalation_threshold, category_id, current_version_id, latest_version_id, status, version, tags, created_by, created_by_name, published_by, published_by_name, created_at, submitted_at, approved_at, published_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', 1, ?, 1, ?, 1, ?, ?, ?, ?, ?)`,
+    [
+      '水龙头滴水/漏水快速处理',
+      '厨房或卫生间水龙头关紧后仍滴水，如何快速排查和处理？',
+      '1. 首先关闭进水角阀，确认水源已切断；\n2. 拆卸把手，查看阀芯是否磨损或卡入异物；\n3. 陶瓷阀芯问题直接更换同型号阀芯（推荐更换而非维修）；\n4. 检查出水嘴起泡器是否积有泥沙，拧下清洗；\n5. 如是老式螺旋式，更换内部橡胶垫片。',
+      '厨房龙头,面盆龙头,淋浴龙头',
+      '更换阀芯后一周内同一客户再次报修，判定为配件质量问题',
+      3,
+      2,
+      2,
+      2,
+      '水龙头,漏水,阀芯,垫片',
+      '系统管理员',
+      '系统管理员',
+      now, now, now, now
+    ]
+  );
+  const eid2 = getLastInsertId();
+  db.run(
+    `INSERT INTO knowledge_versions (entry_id, version_no, title, question, answer, applicable_products, escalation_condition, escalation_threshold, category_id, status, change_log, tags, created_by, created_by_name, created_at, submitted_at, approved_at, published_at)
+     VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, 'published', '初始版本', ?, 1, ?, ?, ?, ?, ?)`,
+    [eid2, '水龙头滴水/漏水快速处理', '厨房或卫生间水龙头关紧后仍滴水，如何快速排查和处理？',
+      '1. 首先关闭进水角阀，确认水源已切断；\n2. 拆卸把手，查看阀芯是否磨损或卡入异物；\n3. 陶瓷阀芯问题直接更换同型号阀芯（推荐更换而非维修）；\n4. 检查出水嘴起泡器是否积有泥沙，拧下清洗；\n5. 如是老式螺旋式，更换内部橡胶垫片。',
+      '厨房龙头,面盆龙头,淋浴龙头', '更换阀芯后一周内同一客户再次报修，判定为配件质量问题', 3, 2,
+      '水龙头,漏水,阀芯,垫片', '系统管理员', now, now, now, now]
+  );
+
+  // 示例 3 - 售后收费说明（客服常用）
+  db.run(
+    `INSERT INTO knowledge_entries (title, question, answer, applicable_products, escalation_condition, escalation_threshold, category_id, current_version_id, latest_version_id, status, version, tags, created_by, created_by_name, published_by, published_by_name, created_at, submitted_at, approved_at, published_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', 1, ?, 1, ?, 1, ?, ?, ?, ?, ?)`,
+    [
+      '售后收费标准沟通话术',
+      '客户询问上门维修是否收费、收多少钱时，客服应该如何规范回答？',
+      '"您好！我们上门检测是免费的，检测完成后会给您提供具体维修方案和费用明细。如果您选择维修，我们会收取配件成本费和适当的工时费，费用公开透明，所有项目都有收费标准可以给您查看。如果您对报价不满意，也可以随时取消维修，不会产生任何费用。请您放心。"',
+      '全品类',
+      '客户对收费产生强烈投诉，且拒绝沟通，判定为需要主管介入',
+      5,
+      5,
+      3,
+      3,
+      '收费,话术,沟通,上门费',
+      '系统管理员',
+      '系统管理员',
+      now, now, now, now
+    ]
+  );
+  const eid3 = getLastInsertId();
+  db.run(
+    `INSERT INTO knowledge_versions (entry_id, version_no, title, question, answer, applicable_products, escalation_condition, escalation_threshold, category_id, status, change_log, tags, created_by, created_by_name, created_at, submitted_at, approved_at, published_at)
+     VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, 'published', '初始版本', ?, 1, ?, ?, ?, ?, ?)`,
+    [eid3, '售后收费标准沟通话术', '客户询问上门维修是否收费、收多少钱时，客服应该如何规范回答？',
+      '"您好！我们上门检测是免费的，检测完成后会给您提供具体维修方案和费用明细。如果您选择维修，我们会收取配件成本费和适当的工时费，费用公开透明，所有项目都有收费标准可以给您查看。如果您对报价不满意，也可以随时取消维修，不会产生任何费用。请您放心。"',
+      '全品类', '客户对收费产生强烈投诉，且拒绝沟通，判定为需要主管介入', 5, 3,
+      '收费,话术,沟通,上门费', '系统管理员', now, now, now, now]
   );
 }
 

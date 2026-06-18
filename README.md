@@ -100,10 +100,10 @@ node test-regression.mjs
 
 | 账号 | 密码 | 角色 | 权限 |
 |------|------|------|------|
-| admin | 123456 | 系统管理员 | 全部权限（审批、强制派单、售后配置、导入导出） |
+| admin | 123456 | 系统管理员 | 全部权限（审批、强制派单、售后/知识库配置、导入导出、版本回滚） |
 | dispatcher | 123456 | 张调度（调度员） | 派单、提交申请，无审批权 |
-| customer_service | 123456 | 李客服（客服） | 发起回访、登记结果、提交申诉、查看自己记录 |
-| supervisor | 123456 | 王主管（主管） | 受理申诉、驳回、转派、标记解决、售后配置查看 |
+| customer_service | 123456 | 李客服（客服） | 发起回访、登记结果、提交申诉、录入知识条目、工单匹配命中、效果反馈 |
+| supervisor | 123456 | 王主管（主管） | 受理申诉/知识条目、驳回/通过、停用条目、审核发布 |
 
 ---
 
@@ -278,31 +278,34 @@ node test-regression.mjs
 
 ```
 ├── api/
-│   ├── db/index.ts           # 数据库层（sql.js + 持久化 + 迁移）
+│   ├── db/index.ts           # 数据库层（sql.js + 持久化 + 迁移，含售后表）
 │   ├── services/             # 业务服务层
 │   │   ├── OrderService.ts   # 工单服务
 │   │   ├── TechnicianService.ts  # 技师与班表服务
 │   │   ├── ApprovalService.ts    # 审批服务
 │   │   ├── ConflictService.ts    # 冲突服务
-│   │   └── ReportService.ts      # 报表服务
+│   │   ├── ReportService.ts      # 报表服务
+│   │   ├── DispatchRuleService.ts # 调度规则服务
+│   │   └── AfterSaleService.ts   # 售后回访与申诉服务
 │   ├── routes/               # API 路由
-│   ├── middleware/auth.ts    # 认证与权限
+│   │   ├── after-sale.ts     # 售后回访与申诉路由
+│   │   └── ...
+│   ├── middleware/auth.ts    # 认证与权限（含主管/客服角色校验）
 │   └── server.ts             # 服务器入口
 ├── src/
 │   ├── pages/                # 页面组件
-│   │   ├── ConflictCenter.tsx # 冲突处理中心页面
+│   │   ├── ReturnVisits.tsx  # 回访管理页面
+│   │   ├── Appeals.tsx       # 申诉处理中心页面
+│   │   ├── AfterSaleConfig.tsx # 售后配置管理页面
 │   │   └── ...
 │   ├── components/           # 通用组件
 │   ├── lib/
 │   │   └── api.ts            # API 请求封装（含 ApiError）
-│   └── store/                # 状态管理
-├── shared/types.ts           # 共享 TypeScript 类型
+│   └── store/                # 状态管理（支持 admin/dispatcher/customer_service/supervisor）
+├── shared/types.ts           # 共享 TypeScript 类型（含售后全部类型）
 ├── data/database.db          # SQLite 数据库文件
+├── test-after-sale.mjs       # 售后模块完整回归测试（9组40+用例）
+├── test-after-sale-persistence.mjs  # 售后模块持久化验证
 ├── test-regression.mjs       # 基础回归测试
-├── test-conflict-center-v2.mjs   # 冲突处理中心完整回归测试（35 用例，撤回前版本）
-├── test-conflict-center-v3.mjs   # 冲突处理中心 v3 回归测试（7组33+用例，含撤回+CSV导出）
-├── test-conflict-center-v3-persistence.mjs  # v3 持久化验证（4组，撤回记录/导出/日志重启后一致）
-├── test-conflict-center-persistence.mjs  # 冲突处理中心旧版持久化验证
-├── test-persistence-check.mjs    # 基础持久化验证脚本
 └── README.md
 ```

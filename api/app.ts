@@ -18,6 +18,7 @@ import reportRoutes from './routes/reports.js'
 import conflictRoutes from './routes/conflicts.js'
 import dispatchRuleRoutes from './routes/dispatch-rules.js'
 import afterSaleRoutes from './routes/after-sale.js'
+import knowledgeRoutes from './routes/knowledge.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -59,6 +60,7 @@ app.use('/api/reports', reportRoutes)
 app.use('/api/conflicts', conflictRoutes)
 app.use('/api/dispatch-rules', dispatchRuleRoutes)
 app.use('/api/after-sale', afterSaleRoutes)
+app.use('/api/knowledge', knowledgeRoutes)
 
 app.use(
   '/api/health',
