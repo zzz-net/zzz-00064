@@ -1,5 +1,6 @@
 /**
  * local server entry file, for local development
+ * refactored: knowledge module contracts unified 2026-06-18
  */
 import app from './app.js';
 

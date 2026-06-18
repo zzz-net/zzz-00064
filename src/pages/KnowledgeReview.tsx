@@ -20,13 +20,14 @@ import {
   Power,
 } from 'lucide-react';
 import Layout from '@/components/Layout/Layout';
-import { api } from '@/lib/api';
+import { knowledgeApi } from '@/lib/knowledgeApi';
 import { useAuthStore } from '@/store/useAuthStore';
 import {
   KnowledgeEntry,
   KnowledgeCategory,
   KnowledgeEntryDetail,
   KnowledgeVersion,
+  KnowledgeStatus,
 } from '../../shared/types.js';
 
 const statusLabels: Record<string, { label: string; color: string; dot: string }> = {
@@ -81,13 +82,34 @@ export default function KnowledgeReview() {
       if (filterCategory) params.set('category_id', filterCategory);
       if (filterKeyword) params.set('keyword', filterKeyword);
       const [entriesRes, catRes, statsRes] = await Promise.all([
-        api.get(`/knowledge/reviews?${params.toString()}`),
-        api.get('/knowledge/categories'),
-        api.get('/knowledge/reviews/stats'),
+        (async () => {
+          try {
+            const status = filterStatus ? (filterStatus as KnowledgeStatus) : undefined;
+            const category_id = filterCategory ? parseInt(filterCategory) : undefined;
+            const keyword = filterKeyword || undefined;
+            return await knowledgeApi.entries.list({ status, category_id, keyword });
+          } catch {
+            return { data: [] };
+          }
+        })(),
+        knowledgeApi.categories.list(),
+        (async () => {
+          try {
+            return await knowledgeApi.entriesStats.get();
+          } catch {
+            return { data: emptyStats };
+          }
+        })(),
       ]);
       setEntries(entriesRes.data || []);
       setCategories(catRes.data || []);
-      setStats(statsRes.data || emptyStats);
+      const statsData: any = statsRes.data || emptyStats;
+      setStats({
+        pending_review: statsData.pending_review || 0,
+        published: statsData.published || 0,
+        rejected: statsData.rejected || 0,
+        disabled: statsData.disabled || 0,
+      });
     } catch (err) {
       console.error('Failed to load review data:', err);
     } finally {
@@ -122,7 +144,7 @@ export default function KnowledgeReview() {
     setDetailLoading(true);
     setShowDetailModal(true);
     try {
-      const res = await api.get(`/knowledge/entries/${id}`);
+      const res = await knowledgeApi.entries.detail(id);
       setDetailData(res.data || null);
     } catch (err: any) {
       alert(err.message || '获取详情失败');
@@ -136,7 +158,7 @@ export default function KnowledgeReview() {
     if (!confirm('确认审核通过并发布该条目？发布后将对客服人员可见。')) return;
     setActionLoading(true);
     try {
-      await api.put(`/knowledge/entries/${id}/approve`);
+      await knowledgeApi.entries.approve(id);
       alert('已审核通过并发布');
       setShowDetailModal(false);
       await loadData();
@@ -160,7 +182,7 @@ export default function KnowledgeReview() {
     setActionLoading(true);
     try {
       if (detailData) {
-        await api.put(`/knowledge/entries/${detailData.entry.id}/reject`, { remark: rejectRemark });
+        await knowledgeApi.entries.reject(detailData.entry.id, { remark: rejectRemark });
         alert('已驳回');
         setShowRejectModal(false);
         setShowDetailModal(false);
@@ -182,10 +204,13 @@ export default function KnowledgeReview() {
     if (!confirm(`确认批量通过当前列表中 ${pending.length} 条待审核条目？`)) return;
     setActionLoading(true);
     try {
-      const res = await api.post('/knowledge/reviews/batch-approve', {
-        ids: pending.map((e) => e.id),
+      const res = await fetch('/api/knowledge/reviews/batch-approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: pending.map((e) => e.id) }),
       });
-      const data: any = res.data || {};
+      const data: any = (await res.json()) || {};
+      if (!res.ok) throw new Error(data.message || '批量操作失败');
       alert(`批量审核完成：成功 ${data.success || 0} 条，失败 ${data.failed || 0} 条`);
       await loadData();
     } catch (err: any) {

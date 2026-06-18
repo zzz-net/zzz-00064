@@ -26,7 +26,7 @@ import {
   BarChart3,
 } from 'lucide-react';
 import Layout from '@/components/Layout/Layout';
-import { api } from '@/lib/api';
+import { knowledgeApi } from '@/lib/knowledgeApi';
 import { useAuthStore } from '@/store/useAuthStore';
 import {
   KnowledgeHitRecord,
@@ -78,18 +78,12 @@ export default function KnowledgeHitRecords() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (filterEntryId) params.set('entry_id', filterEntryId);
-      if (filterOrderId) params.set('order_id', filterOrderId);
-      if (filterUsed !== '') params.set('used', filterUsed);
-      if (filterEffectiveness) params.set('effectiveness', filterEffectiveness);
-      if (filterKeyword) params.set('keyword', filterKeyword);
-      const [recordsRes, statsRes] = await Promise.all([
-        api.get(`/knowledge/hit-records?${params.toString()}&limit=200`),
-        api.get(`/knowledge/hit-records/stats?${params.toString()}`),
-      ]);
+      const entry_id = filterEntryId ? parseInt(filterEntryId) : undefined;
+      const order_id = filterOrderId ? parseInt(filterOrderId) : undefined;
+      const used = filterUsed !== '' ? (parseInt(filterUsed) as 0 | 1) : undefined;
+      const effectiveness = filterEffectiveness ? (filterEffectiveness as KnowledgeEffectiveness) : undefined;
+      const recordsRes = await knowledgeApi.hitRecords.list({ entry_id, order_id, used, effectiveness, limit: 200 });
       setRecords(recordsRes.data || []);
-      setStats(statsRes.data || emptyStats);
     } catch (err) {
       console.error('Failed to load hit records:', err);
     } finally {
@@ -145,13 +139,12 @@ export default function KnowledgeHitRecords() {
 
   const handleMarkUsed = async () => {
     if (!detailData) return;
+    const used = detailData.used === 1 ? 0 : 1;
     if (detailData.used === 1) {
       if (!confirm('取消标记为已采用？')) return;
     }
     try {
-      await api.put(`/knowledge/hit-records/${detailData.id}/used`, {
-        used: detailData.used === 1 ? 0 : 1,
-      });
+      await knowledgeApi.hitRecords.markUsed(detailData.id, { used });
       alert(detailData.used === 1 ? '已取消采用标记' : '已标记为采用');
       await loadData();
       setShowDetailModal(false);
@@ -168,7 +161,7 @@ export default function KnowledgeHitRecords() {
     }
     setActionLoading(true);
     try {
-      await api.put(`/knowledge/hit-records/${detailData.id}/feedback`, {
+      await knowledgeApi.hitRecords.submitFeedback(detailData.id, {
         effectiveness: feedbackEffectiveness,
         feedback: feedbackRemark,
       });

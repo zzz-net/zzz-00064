@@ -28,7 +28,7 @@ import {
   Activity,
 } from 'lucide-react';
 import Layout from '@/components/Layout/Layout';
-import { api } from '@/lib/api';
+import { knowledgeApi, can } from '@/lib/knowledgeApi';
 import { useAuthStore } from '@/store/useAuthStore';
 import {
   KnowledgeEntry,
@@ -140,14 +140,13 @@ export default function KnowledgeBase() {
   const loadEntries = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (filterStatus) params.set('status', filterStatus);
-      if (filterCategory) params.set('category_id', filterCategory);
-      if (filterKeyword) params.set('keyword', filterKeyword);
-      const res = await api.get(`/knowledge/entries?${params.toString()}`);
-      setEntries(res.data || []);
-      const statsRes = await api.get('/knowledge/entries/stats');
+      const status = filterStatus ? (filterStatus as KnowledgeStatus) : undefined;
+      const category_id = filterCategory ? parseInt(filterCategory) : undefined;
+      const keyword = filterKeyword || undefined;
+      const statsRes = await knowledgeApi.entriesStats.get();
       setStats(statsRes.data || emptyStats);
+      const res = await knowledgeApi.entries.list({ status, category_id, keyword });
+      setEntries(res.data || []);
     } catch (err) {
       console.error('Failed to load entries:', err);
     } finally {
@@ -157,7 +156,7 @@ export default function KnowledgeBase() {
 
   const loadCategories = async () => {
     try {
-      const res = await api.get('/knowledge/categories');
+      const res = await knowledgeApi.categories.list();
       setCategories(res.data || []);
     } catch (err) {
       console.error('Failed to load categories:', err);
@@ -166,7 +165,7 @@ export default function KnowledgeBase() {
 
   const loadConfigs = async () => {
     try {
-      const res = await api.get('/knowledge/configs');
+      const res = await knowledgeApi.configs.list();
       setConfigs(res.data || []);
     } catch (err) {
       console.error('Failed to load configs:', err);
@@ -176,7 +175,7 @@ export default function KnowledgeBase() {
   const loadLogs = async () => {
     setLogsLoading(true);
     try {
-      const res = await api.get('/knowledge/logs?limit=200');
+      const res = await knowledgeApi.logs.list({ limit: 200 });
       setLogs(res.data || []);
     } catch (err) {
       console.error('Failed to load logs:', err);
@@ -283,9 +282,9 @@ export default function KnowledgeBase() {
         change_log: formChangeLog || undefined,
       };
       if (editingEntryId) {
-        await api.put(`/knowledge/entries/${editingEntryId}`, payload);
+        await knowledgeApi.entries.update(editingEntryId, payload);
       } else {
-        await api.post('/knowledge/entries', payload);
+        await knowledgeApi.entries.create(payload);
       }
       setShowEntryModal(false);
       await loadEntries();
@@ -301,7 +300,7 @@ export default function KnowledgeBase() {
     setShowDetailModal(true);
     setDetailTab('info');
     try {
-      const res = await api.get(`/knowledge/entries/${id}`);
+      const res = await knowledgeApi.entries.detail(id);
       setDetailData(res.data || null);
     } catch (err: any) {
       alert(err.message || '获取详情失败');
@@ -314,7 +313,7 @@ export default function KnowledgeBase() {
   const handleSubmitReview = async (id: number) => {
     if (!confirm('确认提交该条目到审核流程？')) return;
     try {
-      await api.put(`/knowledge/entries/${id}/submit`);
+      await knowledgeApi.entries.submit(id);
       alert('已提交审核');
       await loadEntries();
       if (detailData?.entry.id === id) openDetailModal(id);
@@ -326,7 +325,7 @@ export default function KnowledgeBase() {
   const handleApprove = async (id: number) => {
     if (!confirm('确认审核通过并发布该条目？')) return;
     try {
-      await api.put(`/knowledge/entries/${id}/approve`);
+      await knowledgeApi.entries.approve(id);
       alert('已审核通过并发布');
       await loadEntries();
       if (detailData?.entry.id === id) openDetailModal(id);
@@ -347,7 +346,7 @@ export default function KnowledgeBase() {
     }
     try {
       if (detailData) {
-        await api.put(`/knowledge/entries/${detailData.entry.id}/reject`, { remark: rejectRemark });
+        await knowledgeApi.entries.reject(detailData.entry.id, { remark: rejectRemark });
         alert('已驳回');
         setShowRejectModal(false);
         await loadEntries();
@@ -358,14 +357,11 @@ export default function KnowledgeBase() {
     }
   };
 
-  const handleDisable = async (id: number, currentStatus: KnowledgeStatus) => {
-    const action = currentStatus === 'disabled' ? '启用' : '停用';
-    if (!confirm(`确认${action}该条目？`)) return;
+  const handleDisable = async (id: number) => {
+    if (!confirm('确认停用该条目？')) return;
     try {
-      await api.put(`/knowledge/entries/${id}/disable`, {
-        disabled: currentStatus !== 'disabled' ? 1 : 0,
-      });
-      alert(`已${action}`);
+      await knowledgeApi.entries.disable(id, { remark: '' });
+      alert('已停用');
       await loadEntries();
       if (detailData?.entry.id === id) openDetailModal(id);
     } catch (err: any) {
@@ -376,7 +372,7 @@ export default function KnowledgeBase() {
   const handleDelete = async (id: number) => {
     if (!confirm('确认删除该条目？此操作不可恢复。')) return;
     try {
-      await api.delete(`/knowledge/entries/${id}`);
+      await knowledgeApi.entries.delete(id);
       alert('已删除');
       setShowDetailModal(false);
       await loadEntries();
@@ -387,7 +383,7 @@ export default function KnowledgeBase() {
 
   const openRollbackConfirm = () => {
     if (detailData?.versions?.length) {
-      setRollbackVersionId(detailData.versions[0].id?.toString() || '');
+      setRollbackVersionId(detailData.versions[0].version_no?.toString() || '');
     }
     setShowRollbackConfirm(true);
   };
@@ -400,9 +396,7 @@ export default function KnowledgeBase() {
     if (!confirm('确认回滚到所选版本？当前版本内容将被覆盖。')) return;
     try {
       if (detailData) {
-        await api.put(`/knowledge/entries/${detailData.entry.id}/rollback`, {
-          version_id: parseInt(rollbackVersionId),
-        });
+        await knowledgeApi.entries.rollback(detailData.entry.id, { version_no: parseInt(rollbackVersionId) });
         alert('已回滚到指定版本');
         setShowRollbackConfirm(false);
         await loadEntries();
@@ -423,9 +417,9 @@ export default function KnowledgeBase() {
         sort_order: parseInt(formCatSort) || 0,
       };
       if (editingCategoryId) {
-        await api.put(`/knowledge/categories/${editingCategoryId}`, payload);
+        await knowledgeApi.categories.update(editingCategoryId, payload);
       } else {
-        await api.post('/knowledge/categories', payload);
+        await knowledgeApi.categories.create(payload);
       }
       setShowCategoryModal(false);
       setEditingCategoryId(null);
@@ -450,9 +444,8 @@ export default function KnowledgeBase() {
 
   const handleToggleCategory = async (cat: KnowledgeCategory) => {
     try {
-      await api.put(`/knowledge/categories/${cat.id}/enabled`, {
-        enabled: cat.enabled === 1 ? 0 : 1,
-      });
+      const enabled = cat.enabled === 1 ? 0 : 1;
+      await knowledgeApi.categories.setEnabled(cat.id, { enabled });
       await loadCategories();
     } catch (err: any) {
       alert(err.message || '操作失败');
@@ -462,7 +455,7 @@ export default function KnowledgeBase() {
   const handleDeleteCategory = async (id: number) => {
     if (!confirm('确定删除该分类？该分类下的知识条目将变为未分类状态。')) return;
     try {
-      await api.delete(`/knowledge/categories/${id}`);
+      await knowledgeApi.categories.delete(id);
       await loadCategories();
     } catch (err: any) {
       alert(err.message || '删除失败');
@@ -471,7 +464,7 @@ export default function KnowledgeBase() {
 
   const handleUpdateConfig = async (cfg: KnowledgeConfig, newValue: string) => {
     try {
-      await api.put('/knowledge/configs', {
+      await knowledgeApi.configs.update({
         config_key: cfg.config_key,
         config_value: newValue,
         description: cfg.description,
@@ -531,12 +524,10 @@ export default function KnowledgeBase() {
 
   const handleExportCsv = async () => {
     try {
-      const params = new URLSearchParams();
-      if (filterStatus) params.set('status', filterStatus);
-      if (filterCategory) params.set('category_id', filterCategory);
-      if (filterKeyword) params.set('keyword', filterKeyword);
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      await api.download(`/knowledge/entries/export?${params.toString()}`, `knowledge-${timestamp}.csv`);
+      const status = filterStatus ? (filterStatus as KnowledgeStatus) : undefined;
+      const category_id = filterCategory ? parseInt(filterCategory) : undefined;
+      const keyword = filterKeyword || undefined;
+      await knowledgeApi.entries.exportCsv({ status, category_id, keyword });
     } catch (err: any) {
       alert(err.message || '导出失败');
     }
@@ -549,7 +540,7 @@ export default function KnowledgeBase() {
     }
     setImporting(true);
     try {
-      const res = await api.post('/knowledge/entries/import', { csv_text: importCsvText });
+      const res = await knowledgeApi.entries.importCsv({ csvContent: importCsvText });
       setImportResult(res.data || null);
     } catch (err: any) {
       alert(err.message || '导入失败');
@@ -588,23 +579,23 @@ export default function KnowledgeBase() {
             <p className="text-slate-500 mt-1">管理售后知识库的条目、分类、参数配置和操作日志</p>
           </div>
           <div className="flex gap-2">
-            {isAdmin && activeTab === 'entries' && (
-              <>
-                <button
-                  onClick={() => { setImportCsvText(''); setImportResult(null); setShowImportModal(true); }}
-                  className="px-4 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
-                >
-                  <Upload className="w-4 h-4" />
-                  CSV 导入
-                </button>
-                <button
-                  onClick={handleExportCsv}
-                  className="px-4 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
-                >
-                  <Download className="w-4 h-4" />
-                  CSV 导出
-                </button>
-              </>
+            {activeTab === 'entries' && can(user?.role || '', 'entry:import') && (
+              <button
+                onClick={() => { setImportCsvText(''); setImportResult(null); setShowImportModal(true); }}
+                className="px-4 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+              >
+                <Upload className="w-4 h-4" />
+                CSV 导入
+              </button>
+            )}
+            {activeTab === 'entries' && can(user?.role || '', 'entry:export') && (
+              <button
+                onClick={handleExportCsv}
+                className="px-4 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+              >
+                <Download className="w-4 h-4" />
+                CSV 导出
+              </button>
             )}
             {activeTab === 'entries' && (
               <button
@@ -817,15 +808,11 @@ export default function KnowledgeBase() {
                                       <Send className="w-4 h-4" />
                                     </button>
                                   )}
-                                  {(item.status === 'published' || item.status === 'disabled') && (
+                                  {item.status === 'published' && can(user?.role || '', 'entry:disable') && (
                                     <button
-                                      onClick={() => handleDisable(item.id, item.status)}
-                                      className={`p-1.5 text-slate-500 rounded-lg transition-colors ${
-                                        item.status === 'disabled'
-                                          ? 'hover:text-green-600 hover:bg-green-50'
-                                          : 'hover:text-red-600 hover:bg-red-50'
-                                      }`}
-                                      title={item.status === 'disabled' ? '启用' : '停用'}
+                                      onClick={() => handleDisable(item.id)}
+                                      className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                      title="停用"
                                     >
                                       <Power className="w-4 h-4" />
                                     </button>
@@ -1482,17 +1469,13 @@ export default function KnowledgeBase() {
                         )}
                       </>
                     )}
-                    {actions?.can_disable && (entry.status === 'published' || entry.status === 'disabled') && (
+                    {actions?.can_disable && entry.status === 'published' && (
                       <button
-                        onClick={() => handleDisable(entry.id, entry.status)}
-                        className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-1.5 ${
-                          entry.status === 'disabled'
-                            ? 'bg-green-600 hover:bg-green-700 text-white'
-                            : 'bg-orange-600 hover:bg-orange-700 text-white'
-                        }`}
+                        onClick={() => handleDisable(entry.id)}
+                        className="px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-1.5 bg-orange-600 hover:bg-orange-700 text-white"
                       >
                         <Power className="w-4 h-4" />
-                        {entry.status === 'disabled' ? '启用' : '停用'}
+                        停用
                       </button>
                     )}
                     {actions?.can_rollback && (detailData?.versions || []).length > 1 && (
@@ -1585,7 +1568,7 @@ export default function KnowledgeBase() {
                     {(detailData?.versions || [])
                       .filter((v: KnowledgeVersion) => v.id !== entry?.current_version_id)
                       .map((v: KnowledgeVersion) => (
-                        <option key={v.id} value={v.id}>
+                        <option key={v.id} value={v.version_no}>
                           v{v.version_no} - {v.change_log || '无变更说明'} ({formatDateTime(v.created_at)})
                         </option>
                       ))}

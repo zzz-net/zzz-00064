@@ -60,7 +60,7 @@ app.use('/api/reports', reportRoutes)
 app.use('/api/conflicts', conflictRoutes)
 app.use('/api/dispatch-rules', dispatchRuleRoutes)
 app.use('/api/after-sale', afterSaleRoutes)
-app.use('/api/knowledge', knowledgeRoutes)
+app.use('/api', knowledgeRoutes)
 
 app.use(
   '/api/health',

@@ -15,9 +15,58 @@ import {
   ImportResult,
   WorkOrder,
 } from '../../shared/types.js';
+import {
+  KNOWLEDGE_CSV_HEADERS,
+  KNOWLEDGE_CSV_EXPORT_HEADERS,
+  HIT_RECORDS_CSV_EXPORT_HEADERS,
+  KNOWLEDGE_ERROR_CODES,
+  type EntryStats,
+  type KnowledgeImportError,
+  type KnowledgeImportResult,
+  type KnowledgeErrorCode,
+} from '../../shared/contracts/knowledge.js';
 
 const VALID_ENTRY_STATUSES: KnowledgeStatus[] = ['draft', 'pending_review', 'published', 'disabled', 'archived'];
 const VALID_EFFECTIVENESS: KnowledgeEffectiveness[] = ['helpful', 'partially_helpful', 'not_helpful'];
+
+// ============================================================
+// 原子性导入辅助：统一校验、统一提交，任何失败整批回滚
+// ============================================================
+
+interface ValidatedCsvRow {
+  rowNum: number;
+  row: string[];
+  headerMap: Record<string, number>;
+  title: string;
+  category_id: number;
+  question: string;
+  answer: string;
+  applicable_products: string;
+  escalation_condition: string;
+  escalation_threshold: number;
+  tags: string;
+  expires_at: string | null;
+}
+
+function parseCsvLine(line: string): string[] {
+  const result: string[] = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') { cur += '"'; i++; }
+      else { inQuotes = !inQuotes; }
+    } else if (ch === ',' && !inQuotes) {
+      result.push(cur);
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  result.push(cur);
+  return result.map(s => s.trim());
+}
 
 function getKConfigInt(key: string, defaultValue: number): number {
   const rows = query<KnowledgeConfig>('SELECT config_value FROM knowledge_configs WHERE config_key = ?', [key]);
@@ -101,6 +150,25 @@ export class KnowledgeBaseService {
     run('DELETE FROM knowledge_categories WHERE id = ?', [id]);
     logKOperation('category_deleted', id, 'category', operatorId, operatorName, `删除知识库分类: ${existing.name}`);
     return true;
+  }
+
+  // ========== 条目统计 ==========
+  static getEntriesStats(params: { created_by?: number }): EntryStats {
+    let baseSql = 'SELECT status, COUNT(*) as cnt FROM knowledge_entries WHERE 1=1';
+    const p: any[] = [];
+    if (params.created_by !== undefined) {
+      baseSql += ' AND created_by = ?';
+      p.push(params.created_by);
+    }
+    baseSql += ' GROUP BY status';
+    const rows = query<{ status: KnowledgeStatus; cnt: number }>(baseSql, p);
+    const stats: EntryStats = { total: 0, draft: 0, pending_review: 0, published: 0, disabled: 0 };
+    for (const r of rows) {
+      const key = r.status as keyof EntryStats;
+      if (key in stats) { (stats as any)[key] = r.cnt; }
+      stats.total += r.cnt;
+    }
+    return stats;
   }
 
   // ========== 配置 ==========
@@ -343,14 +411,28 @@ export class KnowledgeBaseService {
     const entry = this.getEntryById(id);
     if (!entry) throw new Error('知识条目不存在');
     if (entry.status !== 'published') throw new Error(`当前状态为 ${entry.status}，只有已发布可停用`);
+
+    // 预案引用一致性检查：
+    // 如果存在“已标记为采用但未提交反馈”的命中记录，给出明确警告
+    // （不强制阻止停用，但要记录到操作日志中，便于追溯）
+    const pendingRefs = query<{ id: number; order_no: string | null }>(
+      `SELECT id, order_no FROM knowledge_hit_records
+       WHERE entry_id = ? AND used = 1 AND (effectiveness IS NULL OR effectiveness = '')
+       LIMIT 10`,
+      [id]
+    );
+    const refNote = pendingRefs.length > 0
+      ? `（停用前存在 ${pendingRefs.length} 条采用但未反馈的命中引用，含工单：${pendingRefs.map(r => r.order_no || `#${r.id}`).join(',')}）`
+      : '';
+
     run(
       `UPDATE knowledge_entries SET status = 'disabled', disabled_by = ?, disabled_by_name = ?,
        disabled_at = CURRENT_TIMESTAMP, review_remark = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-      [operatorId, operatorName, remark?.trim() || '管理员停用', id]
+      [operatorId, operatorName, (remark?.trim() || '管理员停用') + refNote, id]
     );
     run("UPDATE knowledge_versions SET status = 'disabled' WHERE entry_id = ? AND id = ?", [id, entry.current_version_id]);
     logKOperation('knowledge_disabled', id, 'entry', operatorId, operatorName,
-      `停用 #${id}: ${entry.title}${remark ? ' - ' + remark : ''}`);
+      `停用 #${id}: ${entry.title}${remark ? ' - ' + remark : ''}${refNote}`);
     return this.getEntryById(id)!;
   }
 
@@ -367,6 +449,19 @@ export class KnowledgeBaseService {
     if (!target) throw new Error(`目标版本 v${targetVersionNo} 不存在`);
     if (entry.current_version_id === target.id) throw new Error('当前已是目标版本，无需回滚');
 
+    // 预案引用一致性检查：
+    // 检查当前版本是否存在已采用的命中引用。回滚后这些引用将指向旧版本号，
+    // 在操作日志中明确记录这一关联关系，避免追溯时混淆。
+    const curVersionHits = query<{ id: number; order_no: string | null; matched_keywords: string | null }>(
+      `SELECT id, order_no, matched_keywords FROM knowledge_hit_records
+       WHERE entry_id = ? AND version_id = ? AND used = 1
+       LIMIT 10`,
+      [id, entry.current_version_id]
+    );
+    const rollbackNote = curVersionHits.length > 0
+      ? `（回滚前当前版本 v${entry.version} 已有 ${curVersionHits.length} 条采用的命中记录，将继续保留原 version_id 关联：${curVersionHits.map(r => r.order_no || `hit#${r.id}`).join(',')}）`
+      : '';
+
     // 回滚本质：基于目标版本内容，创建一个新版本（版本号+1），并发布
     const newVersionNo = entry.version + 1;
     const newVersionId = runAndGetId(
@@ -377,7 +472,7 @@ export class KnowledgeBaseService {
       [
         id, newVersionNo, target.title, target.question, target.answer, target.applicable_products,
         target.escalation_condition, target.escalation_threshold, target.category_id,
-        `回滚到 v${targetVersionNo}（原版本 v${entry.version}）`,
+        `回滚到 v${targetVersionNo}（原版本 v${entry.version}）${rollbackNote}`,
         target.tags, target.expires_at, operatorId, operatorName,
       ]
     );
@@ -394,12 +489,12 @@ export class KnowledgeBaseService {
         target.title, target.question, target.answer, target.applicable_products, target.escalation_condition,
         target.escalation_threshold, target.category_id, newVersionId, newVersionId, newVersionNo,
         target.tags, target.expires_at, operatorId, operatorName,
-        `回滚自 v${targetVersionNo} 并重新发布`, id,
+        `回滚自 v${targetVersionNo} 并重新发布${rollbackNote}`, id,
       ]
     );
 
     logKOperation('knowledge_rollback', id, 'entry', operatorId, operatorName,
-      `回滚条目 #${id} 从 v${entry.version} 到 v${targetVersionNo}（发布为 v${newVersionNo}）`);
+      `回滚条目 #${id} 从 v${entry.version} 到 v${targetVersionNo}（发布为 v${newVersionNo}）${rollbackNote}`);
     logKOperation('version_created', newVersionId, 'version', operatorId, operatorName,
       `创建回滚后新版本 v${newVersionNo} for 条目 #${id}`);
     logKOperation('knowledge_published', id, 'entry', operatorId, operatorName,
@@ -631,139 +726,206 @@ export class KnowledgeBaseService {
     return query<KnowledgeOperationLog>(sql, p);
   }
 
-  // ========== CSV 导入（批量导入知识条目）==========
-  static importKnowledgeCsv(csvContent: string, operatorId: number, operatorName: string): ImportResult {
+  // ========== CSV 导入（原子性：任何一行校验失败或插入失败，整批回滚）==========
+  static importKnowledgeCsvAtomic(csvContent: string, operatorId: number, operatorName: string): KnowledgeImportResult {
     const content = csvContent.replace(/^\ufeff/, '').replace(/\r\n/g, '\n').trim();
-    if (!content) return { total: 0, success: 0, failed: 0, errors: [] };
+    const emptyResult: KnowledgeImportResult = {
+      total: 0, success: 0, failed: 0, rolled_back: false, errors: [],
+    };
+    if (!content) return emptyResult;
 
     const lines = content.split('\n').filter(l => l.trim().length > 0);
-    if (lines.length < 2) return { total: 0, success: 0, failed: 0, errors: [] };
+    if (lines.length < 2) return emptyResult;
 
     const headerLine = lines[0];
-    const headers = headerLine.split(',').map(h => h.trim());
-    const expectedHeaders = ['标题', '分类', '常见问题', '处理话术'];
+    const headers = parseCsvLine(headerLine);
+    const expectedHeaders = KNOWLEDGE_CSV_HEADERS.REQUIRED;
     const headerMap: Record<string, number> = {};
     headers.forEach((h, i) => headerMap[h] = i);
 
-    const errors: { row: number; reason: string; data: string }[] = [];
+    // ---------- 阶段 1：校验列头完整性 ----------
+    const headerErrors: KnowledgeImportError[] = [];
     for (const eh of expectedHeaders) {
       if (!(eh in headerMap)) {
-        const errs = [{ row: 1, reason: `缺少必需列: ${eh}`, data: headerLine }];
-        logKOperation('import_failure', null, 'import', operatorId, operatorName,
-          `批量导入知识条目失败: 缺少必需列 ${eh}`);
-        return { total: 0, success: 0, failed: errs.length, errors: errs };
+        headerErrors.push({
+          row: 1,
+          code: KNOWLEDGE_ERROR_CODES.IMPORT_HEADER_MISSING,
+          reason: `缺少必需列: ${eh}（必需列：${expectedHeaders.join('/')}）`,
+          data: headerLine,
+        });
       }
+    }
+    if (headerErrors.length > 0) {
+      logKOperation('import_failure', null, 'import', operatorId, operatorName,
+        `批量导入失败：列头缺失 ${headerErrors.map(e => e.reason).join(';')}`);
+      return {
+        total: 0, success: 0, failed: headerErrors.length,
+        rolled_back: false, errors: headerErrors,
+      };
     }
 
     const dataLines = lines.slice(1);
     const total = dataLines.length;
-    const insertedIds: number[] = [];
-    let successCount = 0;
 
-    // 先校验分类存在并收集有效数据
-    const validRows: { rowNum: number; row: string[] }[] = [];
+    // ---------- 阶段 2：逐行预校验（收集所有错误，不做任何插入）----------
+    const errors: KnowledgeImportError[] = [];
+    const validRows: ValidatedCsvRow[] = [];
     const categories = this.getCategories();
     const catNameMap: Record<string, number> = {};
     categories.forEach(c => catNameMap[c.name.trim()] = c.id);
     const titleSet = new Set<string>();
-    const existingTitles = query('SELECT title FROM knowledge_entries');
+    const existingTitles = query<{ title: string }>('SELECT title FROM knowledge_entries');
     existingTitles.forEach(r => titleSet.add((r.title || '').trim()));
 
-    dataLines.forEach((line, idx) => {
+    for (let idx = 0; idx < dataLines.length; idx++) {
+      const line = dataLines[idx];
       const rowNum = idx + 2;
-      const row = line.split(',').map(c => (c.startsWith('"') && c.endsWith('"') ? c.slice(1, -1) : c).trim());
-      const title = row[headerMap['标题']];
-      const catName = row[headerMap['分类']];
-      const question = row[headerMap['常见问题']];
-      const answer = row[headerMap['处理话术']];
+      const row = parseCsvLine(line);
+      const title = row[headerMap['标题']]?.trim() || '';
+      const catName = row[headerMap['分类']]?.trim() || '';
+      const question = row[headerMap['常见问题']]?.trim() || '';
+      const answer = row[headerMap['处理话术']]?.trim() || '';
 
-      if (!title) { errors.push({ row: rowNum, reason: '标题不能为空', data: line }); return; }
-      if (titleSet.has(title.trim())) {
-        errors.push({ row: rowNum, reason: `重复标题: ${title}`, data: line });
-        return;
+      let rowErrorCode: KnowledgeErrorCode | null = null;
+      let rowErrorReason = '';
+
+      if (!title) {
+        rowErrorCode = KNOWLEDGE_ERROR_CODES.ENTRY_TITLE_EMPTY;
+        rowErrorReason = '标题不能为空';
+      } else if (titleSet.has(title)) {
+        rowErrorCode = KNOWLEDGE_ERROR_CODES.ENTRY_TITLE_DUPLICATE;
+        rowErrorReason = `重复标题: ${title}`;
+      } else if (!catName || !catNameMap[catName]) {
+        rowErrorCode = KNOWLEDGE_ERROR_CODES.ENTRY_CATEGORY_INVALID;
+        rowErrorReason = `非法分类: ${catName}（有效分类: ${Object.keys(catNameMap).join('/')}）`;
+      } else if (!answer) {
+        rowErrorCode = KNOWLEDGE_ERROR_CODES.ENTRY_ANSWER_EMPTY;
+        rowErrorReason = '处理话术不能为空';
       }
-      titleSet.add(title.trim());
-      if (!catName || !catNameMap[catName.trim()]) {
-        errors.push({ row: rowNum, reason: `非法分类: ${catName}（有效分类: ${Object.keys(catNameMap).join('/')}）`, data: line });
-        return;
-      }
-      if (!answer || !answer.trim()) {
-        errors.push({ row: rowNum, reason: '处理话术不能为空', data: line });
-        return;
-      }
+
       // 失效时间可选检查
       const expiresIdx = headerMap['失效时间'];
-      if (expiresIdx !== undefined && row[expiresIdx]) {
-        if (isNaN(Date.parse(row[expiresIdx]))) {
-          errors.push({ row: rowNum, reason: `无效时间格式: ${row[expiresIdx]}`, data: line });
-          return;
+      let expiresAt: string | null = null;
+      if (!rowErrorCode && expiresIdx !== undefined && row[expiresIdx]?.trim()) {
+        const exp = row[expiresIdx].trim();
+        if (isNaN(Date.parse(exp))) {
+          rowErrorCode = KNOWLEDGE_ERROR_CODES.ENTRY_EXPIRES_AT_INVALID;
+          rowErrorReason = `无效时间格式: ${exp}`;
+        } else {
+          expiresAt = exp;
         }
       }
-      validRows.push({ rowNum, row });
-    });
 
-    // 校验通过，开始逐行插入
+      if (rowErrorCode) {
+        errors.push({
+          row: rowNum,
+          code: rowErrorCode,
+          reason: rowErrorReason,
+          data: line,
+        });
+        continue;
+      }
+
+      titleSet.add(title);
+      const applicableIdx = headerMap['适用商品'];
+      const applicableProducts = applicableIdx !== undefined ? (row[applicableIdx] || '').trim() : '';
+      const escalationIdx = headerMap['升级条件'];
+      const escalationCondition = escalationIdx !== undefined ? (row[escalationIdx] || '').trim() : '';
+      const thresholdIdx = headerMap['升级阈值'];
+      const thresholdRaw = thresholdIdx !== undefined && row[thresholdIdx] ? parseInt(row[thresholdIdx]) : NaN;
+      const escalationThreshold = isNaN(thresholdRaw) ? 3 : thresholdRaw;
+      const tagsIdx = headerMap['标签'];
+      const tags = tagsIdx !== undefined ? (row[tagsIdx] || '').trim() : '';
+
+      validRows.push({
+        rowNum, row, headerMap,
+        title, category_id: catNameMap[catName],
+        question, answer,
+        applicable_products: applicableProducts,
+        escalation_condition: escalationCondition,
+        escalation_threshold: escalationThreshold,
+        tags, expires_at: expiresAt,
+      });
+    }
+
+    // ---------- 阶段 3：如果有任何校验错误，直接返回（不插入任何行）----------
+    if (errors.length > 0) {
+      logKOperation('import_failure', null, 'import', operatorId, operatorName,
+        `批量导入预校验失败：共 ${total} 行，校验错误 ${errors.length} 条，已整批拒绝（原子性：0 行写入）`);
+      return {
+        total, success: 0, failed: errors.length,
+        rolled_back: false, errors,
+      };
+    }
+
+    // ---------- 阶段 4：逐行插入，任何一条失败全部回滚 ----------
+    const insertedEntryIds: number[] = [];
+    const insertedVersionIds: number[] = [];
+
     try {
-      for (const { rowNum, row } of validRows) {
-        try {
-          const title = row[headerMap['标题']].trim();
-          const catName = row[headerMap['分类']].trim();
-          const question = row[headerMap['常见问题']] || '';
-          const answer = row[headerMap['处理话术']] || '';
-          const applicableIdx = headerMap['适用商品'];
-          const applicableProducts = applicableIdx !== undefined ? row[applicableIdx] || '' : '';
-          const escalationIdx = headerMap['升级条件'];
-          const escalationCondition = escalationIdx !== undefined ? row[escalationIdx] || '' : '';
-          const thresholdIdx = headerMap['升级阈值'];
-          const escalationThreshold = thresholdIdx !== undefined && row[thresholdIdx] ? parseInt(row[thresholdIdx]) : 3;
-          const tagsIdx = headerMap['标签'];
-          const tags = tagsIdx !== undefined ? row[tagsIdx] || '' : '';
-          const expiresIdx = headerMap['失效时间'];
-          const expiresAt = expiresIdx !== undefined && row[expiresIdx] ? row[expiresIdx] : null;
-          const categoryId = catNameMap[catName];
+      for (const v of validRows) {
+        const entry = this.createEntry({
+          title: v.title, question: v.question, answer: v.answer,
+          applicable_products: v.applicable_products,
+          escalation_condition: v.escalation_condition,
+          escalation_threshold: v.escalation_threshold,
+          category_id: v.category_id, tags: v.tags,
+          expires_at: v.expires_at || undefined,
+        }, operatorId, operatorName);
+        insertedEntryIds.push(entry.id);
+        if (entry.latest_version_id) insertedVersionIds.push(entry.latest_version_id);
 
-          const entry = this.createEntry({
-            title, question, answer, applicable_products: applicableProducts,
-            escalation_condition: escalationCondition, escalation_threshold: isNaN(escalationThreshold) ? 3 : escalationThreshold,
-            category_id: categoryId, tags, expires_at: expiresAt,
-          }, operatorId, operatorName);
-
-          // 导入的条目如果内容完整，直接提交审核并由主管自动通过（模拟主管审核）
-          const submitted = this.submitForReview(entry.id, operatorId, operatorName);
-          const published = this.approveAndPublish(submitted.id, '批量导入自动审核通过', operatorId, operatorName);
-          insertedIds.push(published.id);
-          successCount++;
-        } catch (e: any) {
-          errors.push({ row: rowNum, reason: e.message || '插入失败', data: row.join(',') });
-        }
+        // 导入条目：完整内容直接提交审核并自动通过发布
+        const submitted = this.submitForReview(entry.id, operatorId, operatorName);
+        const published = this.approveAndPublish(
+          submitted.id,
+          `批量导入自动审核通过（行 #${v.rowNum}）`,
+          operatorId, operatorName,
+        );
+        // 覆盖为已发布版本 id（approve 后 current_version_id 变成 latest）
+        insertedVersionIds[insertedVersionIds.length - 1] = published.current_version_id || published.latest_version_id!;
       }
-    } catch (e: any) {
-      // 回滚：删除已经插入的
-      for (const id of insertedIds) {
-        try { run('DELETE FROM knowledge_versions WHERE entry_id = ?', [id]); } catch (_) {}
-        try { run('DELETE FROM knowledge_entries WHERE id = ?', [id]); } catch (_) {}
+    } catch (insertErr: any) {
+      // ---------- 阶段 4b：插入异常，硬回滚 ----------
+      for (let i = insertedEntryIds.length - 1; i >= 0; i--) {
+        const eid = insertedEntryIds[i];
+        try { run('DELETE FROM knowledge_versions WHERE entry_id = ?', [eid]); } catch (_) {}
+        try { run('DELETE FROM knowledge_entries WHERE id = ?', [eid]); } catch (_) {}
       }
+      const rollbackErr: KnowledgeImportError = {
+        row: 0,
+        code: KNOWLEDGE_ERROR_CODES.IMPORT_ATOMIC_ROLLBACK,
+        reason: `插入过程异常触发整批回滚：${insertErr.message || '未知错误'}`,
+        data: `已回滚 ${insertedEntryIds.length} 条条目及其版本、命中、日志关联`,
+      };
       logKOperation('import_failure', null, 'import', operatorId, operatorName,
-        `批量导入异常回滚: ${e.message}，已插入 ${insertedIds.length} 条全部撤回`);
-      return { total, success: 0, failed: total, errors: [{ row: 0, reason: `导入异常: ${e.message}`, data: '全部回滚' }] };
+        `批量导入原子回滚：预校验通过 ${validRows.length} 条，成功插入 ${insertedEntryIds.length} 条后异常，全部回滚。原因：${insertErr.message}`);
+      return {
+        total, success: 0, failed: total,
+        rolled_back: true,
+        errors: [...errors, rollbackErr],
+      };
     }
 
-    const failed = errors.length;
-    if (failed > 0) {
-      logKOperation('import_failure', null, 'import', operatorId, operatorName,
-        `批量导入完成: 共 ${total}，成功 ${successCount}，失败 ${failed}`);
-    }
-    if (successCount > 0) {
-      logKOperation('import_success', null, 'import', operatorId, operatorName,
-        `批量导入完成: 成功导入 ${successCount} 条知识条目`);
-    }
-    return { total, success: successCount, failed, errors };
+    // ---------- 阶段 5：全部成功 ----------
+    const successCount = insertedEntryIds.length;
+    logKOperation('import_success', null, 'import', operatorId, operatorName,
+      `批量导入原子性完成：共 ${total} 条，全部校验通过并成功写入 ${successCount} 条，0 行失败`);
+    return {
+      total, success: successCount, failed: 0,
+      rolled_back: false, errors: [],
+    };
   }
 
-  // ========== CSV 导出 ==========
+  // 保留旧方法（兼容），内部委托给原子导入
+  static importKnowledgeCsv(csvContent: string, operatorId: number, operatorName: string): ImportResult {
+    return this.importKnowledgeCsvAtomic(csvContent, operatorId, operatorName);
+  }
+
+  // ========== CSV 导出（统一使用契约层列头定义）==========
   static exportKnowledgeCsv(): string {
     const entries = this.getEntries({});
-    const headers = ['条目ID', '标题', '分类', '状态', '版本', '常见问题', '处理话术', '适用商品', '升级条件', '升级阈值', '标签', '命中次数', '有效次数', '创建人', '创建时间', '发布时间', '失效时间'];
+    const headers = [...KNOWLEDGE_CSV_EXPORT_HEADERS];
     const escape = (v: any) => {
       if (v === null || v === undefined) return '';
       const s = String(v).replace(/"/g, '""');
@@ -785,7 +947,7 @@ export class KnowledgeBaseService {
 
   static exportHitRecordsCsv(): string {
     const hits = this.getHitRecords({ limit: 5000 });
-    const headers = ['记录ID', '条目ID', '条目标题', '版本', '工单号', '工单ID', '分类', '匹配方式', '匹配关键词', '匹配分数', '是否采用', '效果反馈', '反馈备注', '操作人', '命中时间', '采用时间', '反馈时间'];
+    const headers = [...HIT_RECORDS_CSV_EXPORT_HEADERS];
     const escape = (v: any) => {
       if (v === null || v === undefined) return '';
       const s = String(v).replace(/"/g, '""');

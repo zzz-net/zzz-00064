@@ -25,7 +25,7 @@ import { useAuthStore } from '@/store/useAuthStore';
 import {
   ReturnVisitTemplate,
   AppealCategory,
-  AfterSaleConfig,
+  AfterSaleConfig as AfterSaleConfigRow,
   AfterSaleOperationLog,
 } from '../../shared/types.js';
 
@@ -59,7 +59,7 @@ export default function AfterSaleConfig() {
 
   const [templates, setTemplates] = useState<ReturnVisitTemplate[]>([]);
   const [categories, setCategories] = useState<AppealCategory[]>([]);
-  const [configs, setConfigs] = useState<AfterSaleConfig[]>([]);
+  const [configs, setConfigs] = useState<AfterSaleConfigRow[]>([]);
   const [logs, setLogs] = useState<AfterSaleOperationLog[]>([]);
   const [loading, setLoading] = useState(false);
   const [logsLoading, setLogsLoading] = useState(false);
@@ -227,7 +227,7 @@ export default function AfterSaleConfig() {
     }
   };
 
-  const handleUpdateConfig = async (cfg: AfterSaleConfig, newValue: string) => {
+  const handleUpdateConfig = async (cfg: AfterSaleConfigRow, newValue: string) => {
     try {
       await api.put('/after-sale/configs', {
         config_key: cfg.config_key,
@@ -240,7 +240,7 @@ export default function AfterSaleConfig() {
     }
   };
 
-  const renderConfigValue = (cfg: AfterSaleConfig) => {
+  const renderConfigValue = (cfg: AfterSaleConfigRow) => {
     if (cfg.config_key === 'appeal_image_required') {
       return (
         <select
